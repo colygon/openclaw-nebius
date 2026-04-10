@@ -1009,9 +1009,7 @@ app.get('/api/build/source/:type', requireAuth, (req, res) => {
     const entryMatch = script.match(/cat > [^\n]*entrypoint\.sh[^\n]*<<\s*'ENTRYPOINT'\n([\s\S]*?)\nENTRYPOINT/);
     const entrypoint = entryMatch ? entryMatch[1] : null;
 
-    const repo = type === 'nemoclaw'
-      ? 'https://github.com/opencolin/openclaw-deploy'
-      : 'https://github.com/opencolin/openclaw-deploy';
+    const repo = 'https://github.com/opencolin/openclaw-nebius';
 
     res.json({ dockerfile, entrypoint, scriptPath: `install-${type}-serverless.sh`, repo });
   } catch (e) {
