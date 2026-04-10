@@ -397,7 +397,7 @@ openclaw config set agents.defaults.model.primary "nebius/deepseek-ai/DeepSeek-V
 
 **Model naming:** Always use the `nebius/` prefix — `nebius/zai-org/GLM-5` (correct), not `zai-org/GLM-5` (will fail with "Unknown model").
 
-Popular models: `nebius/Qwen/Qwen3.5-397B-A17B`, `nebius/deepseek-ai/DeepSeek-V3.2`, `nebius/zai-org/GLM-5`, `nebius/openai/gpt-oss-120b`. See the [nebius-plugin package](../nebius-plugin) for the full catalog and pricing.
+Popular models: `nebius/Qwen/Qwen3.5-397B-A17B`, `nebius/deepseek-ai/DeepSeek-V3.2`, `nebius/zai-org/GLM-5`, `nebius/openai/gpt-oss-120b`. See the [tokenfactory-plugin package](../tokenfactory-plugin) for the full catalog and pricing.
 
 ### Gateway Configuration (openclaw.json)
 

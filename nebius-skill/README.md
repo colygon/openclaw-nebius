@@ -211,8 +211,9 @@ For more details, see the troubleshooting table in [SKILL.md](SKILL.md) and [ref
 
 ## Related Packages
 
-- [deploy](../deploy) - Deployment UI and scripts for running OpenClaw/NemoClaw on Nebius
-- [nebius-plugin](../nebius-plugin) - OpenClaw provider plugin for Nebius Token Factory (44+ models)
+- [deploy-ui](../deploy-ui) - Deployment UI for running OpenClaw/NemoClaw on Nebius
+- [deploy-scripts](../deploy-scripts) - Shell scripts and infrastructure configs for Nebius deployments
+- [tokenfactory-plugin](../tokenfactory-plugin) - OpenClaw provider plugin for Nebius Token Factory (44+ models)
 - [Nebius CLI docs](https://docs.nebius.com/cli/) - Official CLI documentation
 - [Nebius API](https://github.com/nebius/api) - gRPC API proto definitions and SDKs
 

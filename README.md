@@ -6,9 +6,10 @@ Everything you need to run [OpenClaw](https://github.com/nichochar/openclaw) AI 
 
 | Package | What it does |
 |---|---|
-| **[`nebius-plugin`](nebius-plugin)** | OpenClaw provider plugin -- adds 44+ open-source models (Qwen, DeepSeek, Llama, GLM, FLUX, etc.) via Nebius Token Factory |
+| **[`tokenfactory-plugin`](tokenfactory-plugin)** | OpenClaw provider plugin -- adds 44+ open-source models (Qwen, DeepSeek, Llama, GLM, FLUX, etc.) via Nebius Token Factory |
 | **[`nebius-skill`](nebius-skill)** | Claude Code / OpenClaw skill for deploying and managing Nebius infrastructure from your terminal |
-| **[`deploy`](deploy)** | Web UI + install scripts for deploying OpenClaw to Nebius (live at [claw.moi](https://claw.moi)) |
+| **[`deploy-ui`](deploy-ui)** | Web UI for deploying OpenClaw to Nebius (live at [claw.moi](https://claw.moi)) |
+| **[`deploy-scripts`](deploy-scripts)** | Shell scripts, Dockerfile, and configs for Nebius infrastructure automation |
 
 ## Getting Started
 
@@ -22,13 +23,13 @@ Install the provider plugin to get 44+ models:
 openclaw plugins install clawhub:@colygon/openclaw-nebius
 ```
 
-Then follow the [plugin setup guide](nebius-plugin/SETUP.md) to configure your API key.
+Then follow the [plugin setup guide](tokenfactory-plugin/SETUP.md) to configure your API key.
 
 ### "I want to deploy OpenClaw on Nebius using the web UI"
 
 Open the Deploy UI at **[claw.moi](https://claw.moi)** and follow the wizard. It handles regions, platforms, images, and credentials.
 
-For self-hosting the deploy UI, see [deploy](deploy).
+For self-hosting the deploy UI, see [deploy-ui](deploy-ui).
 
 ### "I want to deploy OpenClaw on Nebius using Claude Code or another coding agent"
 
@@ -51,11 +52,11 @@ The skill handles the full workflow: region selection, endpoint creation, networ
 
 ```bash
 export TOKEN_FACTORY_API_KEY={your-key-from-studio.nebius.ai}
-cd deploy
+cd deploy-scripts
 ./install-openclaw-serverless.sh
 ```
 
-See [deployment paths](deploy/README.md) for all four options (local, Docker, GPU serverless, CPU serverless).
+See [deployment paths](deploy-ui/README.md) for all four options (local, Docker, GPU serverless, CPU serverless).
 
 ## Quick Reference
 
@@ -74,7 +75,7 @@ Get your key at [studio.nebius.ai](https://studio.nebius.ai/). Keys look like `v
 | `nebius/deepseek-ai/DeepSeek-R1-0528` | Reasoning | 163K | $0.80 | $2.40 |
 | `nebius/Qwen/Qwen3-Coder-480B-A35B-Instruct` | Chat | 131K | $0.40 | $1.80 |
 
-38 chat/reasoning models and 2 image generation models total. See [full catalog](nebius-plugin/SETUP.md#available-models).
+38 chat/reasoning models and 2 image generation models total. See [full catalog](tokenfactory-plugin/SETUP.md#available-models).
 
 ### Regions
 
@@ -128,7 +129,7 @@ The nebius-skill package is pure markdown and requires no build step.
           +------------------------+------------------------+
           |                        |                        |
 +---------v----------+  +---------v----------+  +---------v----------+
-|  nebius-plugin     |  |  deploy (web UI)   |  |  nebius-skill      |
+|  tokenfactory-plugin  |  |  deploy-ui         |  |  nebius-skill      |
 |                    |  |                    |  |                    |
 |  Registers models  |  |  Browser wizard    |  |  Claude Code /     |
 |  in OpenClaw as    |  |  + install scripts |  |  OpenClaw skill    |
@@ -137,8 +138,8 @@ The nebius-skill package is pure markdown and requires no build step.
 +--------------------+  +--------------------+  +--------------------+
 ```
 
-- **nebius-plugin** connects OpenClaw to Token Factory for inference (use models)
-- **deploy** provides the UI and scripts to get OpenClaw running on Nebius (deploy agents)
+- **tokenfactory-plugin** connects OpenClaw to Token Factory for inference (use models)
+- **deploy-ui** + **deploy-scripts** provide the UI and scripts to get OpenClaw running on Nebius (deploy agents)
 - **nebius-skill** teaches AI coding assistants how to manage Nebius infrastructure (automate deployments)
 
 ## Related

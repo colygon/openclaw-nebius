@@ -4,15 +4,15 @@
   "private": true,
   "description": "Monorepo for OpenClaw + Nebius integration: provider plugin, deployment UI, and Claude Code skill",
   "workspaces": [
-    "nebius-plugin",
-    "deploy/web"
+    "tokenfactory-plugin",
+    "deploy-ui/web"
   ],
   "scripts": {
-    "build": "npm run build --workspace=nebius-plugin",
-    "test": "npm run test --workspace=nebius-plugin",
-    "check": "npm run check --workspace=nebius-plugin",
-    "dev:deploy": "npm run dev --workspace=deploy/web",
-    "start:deploy": "npm run start --workspace=deploy/web"
+    "build": "npm run build --workspace=tokenfactory-plugin",
+    "test": "npm run test --workspace=tokenfactory-plugin",
+    "check": "npm run check --workspace=tokenfactory-plugin",
+    "dev:deploy": "npm run dev --workspace=deploy-ui/web",
+    "start:deploy": "npm run start --workspace=deploy-ui/web"
   },
   "repository": {
     "type": "git",

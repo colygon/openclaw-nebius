@@ -948,8 +948,8 @@ echo "=== Done ==="`;
 
     // Run build script asynchronously
     const scriptPath = imageType === 'nemoclaw'
-      ? path.resolve(__dirname, '../install-nemoclaw-serverless.sh')
-      : path.resolve(__dirname, '../install-openclaw-serverless.sh');
+      ? path.resolve(__dirname, '../../deploy-scripts/install-nemoclaw-serverless.sh')
+      : path.resolve(__dirname, '../../deploy-scripts/install-openclaw-serverless.sh');
 
     // Check if script exists, if not use inline Dockerfile
     buildCmd = fs.existsSync(scriptPath)
@@ -995,8 +995,8 @@ app.get('/api/build/source/:type', requireAuth, (req, res) => {
   }
 
   const scriptPath = type === 'nemoclaw'
-    ? path.resolve(__dirname, '../install-nemoclaw-serverless.sh')
-    : path.resolve(__dirname, '../install-openclaw-serverless.sh');
+    ? path.resolve(__dirname, '../../deploy-scripts/install-nemoclaw-serverless.sh')
+    : path.resolve(__dirname, '../../deploy-scripts/install-openclaw-serverless.sh');
 
   try {
     const script = fs.readFileSync(scriptPath, 'utf-8');
