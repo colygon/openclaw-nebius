@@ -7,12 +7,20 @@ export function getSystemPrompt(): string {
   if (cachedPrompt) return cachedPrompt;
 
   let skillContent: string;
-  try {
-    const skillPath = resolve(process.cwd(), "..", "nebius-skill", "SKILL.md");
-    skillContent = readFileSync(skillPath, "utf-8");
-  } catch {
-    skillContent =
-      "SKILL.md not found. Use your general knowledge of Nebius Cloud.";
+  // Try multiple paths: monorepo dev, Docker container, fallback
+  const candidates = [
+    resolve(process.cwd(), "..", "nebius-skill", "SKILL.md"),
+    resolve(process.cwd(), "nebius-skill", "SKILL.md"),
+    "/app/nebius-skill/SKILL.md",
+  ];
+  skillContent = "SKILL.md not found. Use your general knowledge of Nebius Cloud.";
+  for (const p of candidates) {
+    try {
+      skillContent = readFileSync(p, "utf-8");
+      break;
+    } catch {
+      continue;
+    }
   }
 
   cachedPrompt = `You are Claw Copilot, an AI deployment assistant for OpenClaw on Nebius Cloud.
