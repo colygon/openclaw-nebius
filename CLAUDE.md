@@ -2,12 +2,13 @@
 
 ## Repository Structure
 
-This is an npm workspaces monorepo with four packages:
+This is an npm workspaces monorepo with five packages:
 
 - `tokenfactory-plugin` — TypeScript OpenClaw provider plugin (builds with `tsc`)
 - `nebius-skill` — Markdown-based Claude Code / OpenClaw skill (no build step)
 - `deploy-ui` — Express.js web UI for deployment management (Node.js, no build step)
 - `deploy-scripts` — Shell scripts, Dockerfile, and configs for Nebius infrastructure automation
+- `claw-copilot` — Next.js + CopilotKit AI deployment assistant (chat-first UI)
 
 ## Commands
 
@@ -17,6 +18,8 @@ npm run build        # Build the tokenfactory-plugin (tsc → dist/)
 npm test             # Run tokenfactory-plugin tests (vitest)
 npm run check        # Type-check tokenfactory-plugin
 npm run dev:deploy   # Start the deploy web UI locally (port 3000)
+npm run dev:copilot  # Start the CopilotKit assistant locally (port 3001)
+npm run build:copilot # Build claw-copilot for production
 ```
 
 ## Key Details
@@ -42,6 +45,15 @@ npm run dev:deploy   # Start the deploy web UI locally (port 3000)
 - Deployed to Vercel (config in `deploy-ui/vercel.json`)
 - Live at https://claw.moi
 - Server reads install scripts from `deploy-scripts/` at runtime via relative path
+
+### claw-copilot
+- Next.js 15 + React 19 + CopilotKit 1.55
+- LLM backend: Nebius Token Factory (OpenAI-compatible) via TOKEN_FACTORY_API_KEY
+- API route: `claw-copilot/app/api/copilotkit/route.ts`
+- System prompt reads `nebius-skill/SKILL.md` at runtime for Nebius knowledge
+- Server-side actions execute `nebius` CLI via child_process (checkPrerequisites, listEndpoints, deployEndpoint, deleteEndpoint, getConnectionInstructions)
+- Runs on port 3001 (deploy-ui uses 3000)
+- Env vars: TOKEN_FACTORY_API_KEY, TOKEN_FACTORY_URL, NEBIUS_MODEL
 
 ### deploy-scripts
 - Install scripts: `install-openclaw-serverless.sh`, `install-nemoclaw-serverless.sh`, `install-nemoclaw-vm.sh`
