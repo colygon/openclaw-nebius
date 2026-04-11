@@ -800,6 +800,7 @@ app.get('/api/registries', requireAuth, async (req, res) => {
     }]);
   }
 
+  const seen = new Set();
   const results = [];
   const regionEntries = Object.entries(REGIONS);
   const token = getUserToken(req);
@@ -808,6 +809,8 @@ app.get('/api/registries', requireAuth, async (req, res) => {
     try {
       const data = nebiusJson('registry list', regionConfig.profile, token);
       for (const reg of (data.items || [])) {
+        if (seen.has(reg.metadata.id)) continue;
+        seen.add(reg.metadata.id);
         results.push({
           id: reg.metadata.id,
           name: reg.metadata.name || 'unnamed',
@@ -840,19 +843,38 @@ app.get('/api/registries/:id/images', requireAuth, (req, res) => {
     const profile = req.query.profile || undefined;
     const token = getUserToken(req);
     const data = nebiusJson(`registry image list --parent-id ${id}`, profile, token);
-    const images = (data.items || []).map(img => {
+    // Deduplicate by image name — keep tagged versions over untagged, newest first
+    const byName = new Map();
+    for (const img of (data.items || [])) {
       const fullName = img.name || img.metadata?.name || '';
-      // Image name format: "registryId/imageName" — extract just the image name
       const shortName = fullName.includes('/') ? fullName.split('/').slice(1).join('/') : fullName;
-      return {
+      const name = shortName || 'unknown';
+      const tags = img.tags || [];
+      const entry = {
         id: img.metadata?.id || img.id || '',
-        name: shortName || 'unknown',
-        tags: img.tags || [],
+        name,
+        tags,
         size: img.size ? `${(img.size / (1024 * 1024)).toFixed(0)} MB` : 'unknown',
         createdAt: img.metadata?.created_at || img.created_at || ''
       };
-    });
-    res.json(images);
+      const existing = byName.get(name);
+      if (!existing) {
+        byName.set(name, entry);
+      } else if (tags.length > 0 && existing.tags.length === 0) {
+        // Prefer tagged over untagged
+        byName.set(name, entry);
+      } else if (tags.length > 0 && existing.tags.length > 0) {
+        // Both tagged — merge tags, keep newest
+        existing.tags = [...new Set([...existing.tags, ...tags])];
+        if (entry.createdAt > existing.createdAt) {
+          existing.createdAt = entry.createdAt;
+          existing.size = entry.size;
+          existing.id = entry.id;
+        }
+      }
+      // Skip untagged duplicates when a tagged version exists
+    }
+    res.json([...byName.values()]);
   } catch (err) {
     res.status(500).json({ error: `Failed to list images: ${err.message.split('\n')[0]}` });
   }
