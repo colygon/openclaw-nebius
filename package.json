@@ -5,8 +5,7 @@
   "description": "Monorepo for OpenClaw + Nebius integration: provider plugin, deployment UI, and Claude Code skill",
   "workspaces": [
     "tokenfactory-plugin",
-    "deploy-ui/web",
-    "claw-copilot"
+    "deploy-ui/web"
   ],
   "scripts": {
     "build": "npm run build --workspace=tokenfactory-plugin",
@@ -15,9 +14,7 @@
     "test:repo": "vitest run --config vitest.config.ts",
     "check": "npm run check --workspace=tokenfactory-plugin",
     "dev:deploy": "npm run dev --workspace=deploy-ui/web",
-    "start:deploy": "npm run start --workspace=deploy-ui/web",
-    "dev:copilot": "npm run dev --workspace=claw-copilot",
-    "build:copilot": "npm run build --workspace=claw-copilot"
+    "start:deploy": "npm run start --workspace=deploy-ui/web"
   },
   "devDependencies": {
     "vitest": "^3.0.0",
