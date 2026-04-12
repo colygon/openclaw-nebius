@@ -64,7 +64,16 @@ app.use(sessionMiddleware);
 const NEBIUS_AUTH_URL = 'https://auth.nebius.com/oauth2/authorize';
 const NEBIUS_TOKEN_URL = 'https://auth.nebius.com/oauth2/token';
 const NEBIUS_CLIENT_ID = process.env.NEBIUS_CLIENT_ID || 'nebius-cli';
-const OAUTH_REDIRECT_URI = process.env.OAUTH_REDIRECT_URI || 'https://claw.moi/api/auth/callback';
+function getOAuthRedirectUri(req) {
+  if (process.env.OAUTH_REDIRECT_URI) return process.env.OAUTH_REDIRECT_URI;
+  // On localhost, build redirect URI dynamically from request
+  const host = req?.get('host');
+  if (host && (host.startsWith('localhost') || host.startsWith('127.0.0.1'))) {
+    const proto = req.protocol || 'http';
+    return `${proto}://${host}/api/auth/callback`;
+  }
+  return 'https://claw.moi/api/auth/callback';
+}
 
 function generatePKCE() {
   const verifier = crypto.randomBytes(32).toString('base64url');
@@ -481,7 +490,8 @@ function nebius(cmd, profile, iamToken) {
   const cmdLabel = safeCmd.split(' ').slice(0, 4).join(' ');
 
   const start = Date.now();
-  const execEnv = { ...process.env, PATH: process.env.PATH };
+  const nebiusBin = require('path').join(require('os').homedir(), '.nebius', 'bin');
+  const execEnv = { ...process.env, PATH: `${nebiusBin}:${process.env.PATH}` };
   if (iamToken) execEnv.NEBIUS_IAM_TOKEN = iamToken;
 
   try {
@@ -510,7 +520,8 @@ function nebiusJson(cmd, profile, iamToken) {
 
 // Build env object for exec/spawn calls that invoke nebius CLI directly
 function nebiusExecEnv(iamToken) {
-  const env = { ...process.env, PATH: process.env.PATH };
+  const nebiusBin = require('path').join(require('os').homedir(), '.nebius', 'bin');
+  const env = { ...process.env, PATH: `${nebiusBin}:${process.env.PATH}` };
   if (iamToken) env.NEBIUS_IAM_TOKEN = iamToken;
   return env;
 }
@@ -617,6 +628,96 @@ app.post('/api/auth/token', async (req, res) => {
       error: 'Invalid token. Run "nebius profile create" first, then "nebius iam get-access-token".'
     });
   }
+});
+
+// OAuth2 PKCE Login — redirects browser to Nebius auth page
+app.get('/api/auth/login', (req, res) => {
+  const { verifier, challenge } = generatePKCE();
+  req.session.pkceVerifier = verifier;
+  const redirectUri = getOAuthRedirectUri(req);
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: NEBIUS_CLIENT_ID,
+    redirect_uri: redirectUri,
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    scope: 'openid'
+  });
+  res.redirect(`${NEBIUS_AUTH_URL}?${params}`);
+});
+
+// OAuth2 PKCE Callback — exchanges code for tokens
+app.get('/api/auth/callback', async (req, res) => {
+  const { code, error } = req.query;
+  if (error || !code) {
+    eventLog.error('AUTH', 'OAuth callback error', { error: error || 'no code' });
+    return res.redirect('/?auth_error=' + encodeURIComponent(error || 'no_code'));
+  }
+
+  const verifier = req.session.pkceVerifier;
+  if (!verifier) {
+    eventLog.error('AUTH', 'OAuth callback missing PKCE verifier');
+    return res.redirect('/?auth_error=missing_verifier');
+  }
+  delete req.session.pkceVerifier;
+
+  try {
+    const redirectUri = getOAuthRedirectUri(req);
+    const tokenRes = await fetch(NEBIUS_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: redirectUri,
+        client_id: NEBIUS_CLIENT_ID,
+        code_verifier: verifier
+      })
+    });
+
+    if (!tokenRes.ok) {
+      const errBody = await tokenRes.text();
+      eventLog.error('AUTH', 'OAuth token exchange failed', { status: tokenRes.status, body: errBody });
+      return res.redirect('/?auth_error=token_exchange_failed');
+    }
+
+    const tokens = await tokenRes.json();
+    const accessToken = tokens.access_token;
+    const expiresIn = tokens.expires_in || 43200; // default 12h
+
+    // Verify token and get user info
+    const whoami = execSync('nebius iam whoami --format json', {
+      encoding: 'utf-8',
+      timeout: 10000,
+      env: nebiusExecEnv(accessToken)
+    }).trim();
+    const identity = JSON.parse(whoami);
+    const attrs = identity.user_profile?.attributes || {};
+    const user = attrs.name || attrs.given_name || attrs.email || identity.user_profile?.id || 'Nebius User';
+
+    // Store in session
+    req.session.nebiusToken = accessToken;
+    req.session.tokenExpiresAt = Date.now() + expiresIn * 1000;
+    req.session.authenticated = true;
+    req.session.isDemo = false;
+    req.session.user = user;
+
+    eventLog.info('AUTH', 'User logged in via OAuth', { user });
+    trackLogin(true);
+
+    res.redirect('/');
+  } catch (err) {
+    eventLog.error('AUTH', 'OAuth callback failed', { error: err.message });
+    trackLogin(false);
+    res.redirect('/?auth_error=callback_failed');
+  }
+});
+
+// Check if OAuth login is available (localhost only)
+app.get('/api/auth/can-oauth', (req, res) => {
+  const host = req.get('host') || '';
+  const isLocal = host.startsWith('localhost') || host.startsWith('127.0.0.1');
+  res.json({ canOAuth: isLocal && !IS_VERCEL });
 });
 
 // Demo mode — use service account (no user token)
@@ -772,6 +873,40 @@ app.put('/api/secrets/:id', requireAuth, (req, res) => {
 
 app.get('/api/regions', (req, res) => {
   res.json(IS_VERCEL ? DEMO_REGIONS : REGIONS);
+});
+
+app.get('/api/projects/:region', requireAuth, (req, res) => {
+  const region = req.params.region;
+  if (!/^[a-z0-9-]+$/.test(region)) {
+    return res.status(400).json({ error: 'Invalid region' });
+  }
+
+  if (IS_VERCEL) {
+    return res.json({ projects: [
+      { id: 'demo-project-1', name: `default-project-${region}` },
+      { id: 'demo-project-2', name: `openclaw-${region}` }
+    ]});
+  }
+
+  if (!TENANT_ID) {
+    return res.json({ projects: [], error: 'No tenant ID configured' });
+  }
+
+  try {
+    const token = getUserToken(req);
+    const profile = REGION_PROFILES[region] || Object.values(REGION_PROFILES)[0];
+    const result = nebiusJson(`iam project list --parent-id ${TENANT_ID}`, profile, token);
+    const allProjects = result.items || [];
+    const regionProjects = allProjects.filter(
+      p => (p.status?.region || p.spec?.region) === region
+    ).map(p => ({
+      id: p.metadata?.id,
+      name: p.metadata?.name || p.metadata?.id
+    }));
+    res.json({ projects: regionProjects });
+  } catch (err) {
+    res.status(500).json({ projects: [], error: 'Failed to list projects: ' + err.message });
+  }
 });
 
 app.get('/api/images', (req, res) => {
@@ -1146,6 +1281,113 @@ app.post('/api/models', requireAuth, async (req, res) => {
   }
 });
 
+// ── Routes: Local OpenClaw Instances ──────────────────────────────────────
+
+app.get('/api/local-instances', async (req, res) => {
+  const GATEWAY_PORT = 18789;
+  const GATEWAY_HOST = '127.0.0.1';
+
+  // 1. TCP probe — fast check if gateway port is open
+  const portOpen = await new Promise((resolve) => {
+    const net = require('net');
+    const sock = net.createConnection({ host: GATEWAY_HOST, port: GATEWAY_PORT, timeout: 1500 });
+    sock.on('connect', () => { sock.destroy(); resolve(true); });
+    sock.on('timeout', () => { sock.destroy(); resolve(false); });
+    sock.on('error', () => { sock.destroy(); resolve(false); });
+  });
+
+  if (!portOpen) {
+    return res.json({ gatewayAvailable: false, gateway: null, instances: [] });
+  }
+
+  // 2. Health check to confirm it's an OpenClaw gateway
+  let health = null;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2000);
+    const healthRes = await fetch(`http://${GATEWAY_HOST}:${GATEWAY_PORT}/health`, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (healthRes.ok) {
+      health = await healthRes.json();
+    }
+  } catch (err) { /* health check failed but port is open */ }
+
+  // 3. Try WS presence with full connect handshake (best-effort, short timeout)
+  let instances = [];
+  try {
+    instances = await new Promise((resolve) => {
+      let settled = false;
+      const done = (val) => { if (!settled) { settled = true; resolve(val); } };
+
+      const ws = new WebSocket(`ws://${GATEWAY_HOST}:${GATEWAY_PORT}`);
+      let connected = false;
+      const timer = setTimeout(() => { try { ws.terminate(); } catch(e) {} done([]); }, 2500);
+
+      ws.on('message', (data) => {
+        try {
+          const msg = JSON.parse(data.toString());
+
+          // Gateway sends connect.challenge first — respond with connect
+          if (!connected && (msg.event === 'connect.challenge' || msg.type === 'event')) {
+            connected = true;
+            ws.send(JSON.stringify({
+              type: 'req', id: 'c1', method: 'connect',
+              params: {
+                minProtocol: 3, maxProtocol: 3,
+                client: { id: 'deploy-ui', version: '1.0.0', platform: 'web', mode: 'operator' },
+                role: 'operator', scopes: ['operator.read'], caps: [], commands: [], permissions: {},
+                locale: 'en-US', userAgent: 'deploy-ui/1.0.0'
+              }
+            }));
+            return;
+          }
+
+          // After connect, request presence
+          if (msg.id === 'c1' && msg.ok) {
+            ws.send(JSON.stringify({ type: 'req', id: 'p1', method: 'system-presence', params: {} }));
+            return;
+          }
+
+          // Connect rejected — still ok, just no instances
+          if (msg.id === 'c1' && !msg.ok) {
+            clearTimeout(timer);
+            try { ws.close(); } catch(e) {}
+            done([]);
+            return;
+          }
+
+          // Presence response
+          if (msg.id === 'p1') {
+            clearTimeout(timer);
+            try { ws.close(); } catch(e) {}
+            const result = msg.ok ? (msg.payload || msg.result || []) : [];
+            done(result);
+          }
+        } catch (e) { /* ignore non-JSON */ }
+      });
+
+      ws.on('error', () => { clearTimeout(timer); done([]); });
+      ws.on('close', () => { clearTimeout(timer); done([]); });
+    });
+  } catch (err) { /* presence query failed, gateway still available */ }
+
+  // Normalize instances: may be an object keyed by instanceId or an array
+  if (instances && !Array.isArray(instances)) {
+    instances = Object.values(instances);
+  }
+
+  res.json({
+    gatewayAvailable: true,
+    gateway: {
+      host: GATEWAY_HOST,
+      port: GATEWAY_PORT,
+      url: `http://${GATEWAY_HOST}:${GATEWAY_PORT}`,
+      health
+    },
+    instances: instances || []
+  });
+});
+
 // ── Routes: Endpoints ──────────────────────────────────────────────────────
 
 app.get('/api/endpoints', requireAuth, async (req, res) => {
@@ -1223,7 +1465,7 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
     });
   }
 
-  const { imageType, model, region, platform, platformPreset, provider, customImage, endpointName, apiKey, usePublicIp } = req.body;
+  const { imageType, model, region, platform, platformPreset, provider, customImage, endpointName, apiKey, usePublicIp, storage, storageSize: rawStorageSize } = req.body;
 
   if (!imageType || !region) {
     return res.status(400).json({ error: 'imageType and region are required' });
@@ -1379,7 +1621,12 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
         eventLog.warn('DEPLOY', 'GPU platform detection failed', { region, error: err.message.split('\n')[0] });
       }
     } else {
-      // Default: auto-detect cheapest CPU platform in this region
+      // Default: auto-detect best CPU platform in this region
+      // NemoClaw requires minimum 4 vCPU / 8 GB RAM
+      const isNemoClaw = imageType === 'nemoclaw';
+      const minVcpu = isNemoClaw ? 4 : 0;
+      const minMemGb = isNemoClaw ? 8 : 0;
+
       try {
         const platforms = nebiusJson('compute platform list', profile, token);
         const cpuPlatforms = (platforms.items || []).filter(p => p.metadata.name.startsWith('cpu-'));
@@ -1390,7 +1637,10 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
 
           for (const plat of cpuPlatforms) {
             for (const pr of (plat.spec?.presets || [])) {
-              const vcpu = pr.resources?.vcpu_count || Infinity;
+              const vcpu = pr.resources?.vcpu_count || 0;
+              const memGb = pr.resources?.memory_gib || pr.resources?.memory_gb || 0;
+              // Skip presets below NemoClaw minimums
+              if (vcpu < minVcpu || memGb < minMemGb) continue;
               if (vcpu < cheapestVcpu) {
                 cheapestVcpu = vcpu;
                 cheapest = { platform: plat.metadata.name, preset: pr.name };
@@ -1401,7 +1651,9 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
           if (cheapest) {
             regionConfig.cpuPlatform = cheapest.platform;
             regionConfig.cpuPreset = cheapest.preset;
-            eventLog.info('DEPLOY', 'Auto-detected cheapest CPU', { region, platform: cheapest.platform, preset: cheapest.preset, vcpu: cheapestVcpu });
+            eventLog.info('DEPLOY', `Auto-detected CPU preset${isNemoClaw ? ' (NemoClaw min: 4vcpu/8gb)' : ''}`, { region, platform: cheapest.platform, preset: cheapest.preset, vcpu: cheapestVcpu });
+          } else if (isNemoClaw) {
+            eventLog.warn('DEPLOY', 'No CPU preset meets NemoClaw minimums (4vcpu/8gb)', { region });
           }
         }
       } catch (err) {
@@ -1543,6 +1795,64 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
       }
     });
 
+    // ── Storage provisioning (async, non-blocking) ─────────────────────────
+    let storageLabel = null;
+    const storageSizeGb = Math.max(10, Math.min(10000, parseInt(rawStorageSize) || 100));
+    if (storage && projectId) {
+      const storageEnv = nebiusExecEnv(token);
+      const storageName = `${name}-${storage === 'postgresql' ? 'pg' : storage === 'filesystem' ? 'fs' : 'bucket'}`;
+
+      if (storage === 'filesystem') {
+        storageLabel = `Filesystem: ${storageName} (${storageSizeGb} GB)`;
+        eventLog.info('STORAGE', 'Creating filesystem', { storageName, sizeGb: storageSizeGb, region, projectId });
+        exec(
+          `nebius ${profileFlag} compute filesystem create --name "${storageName}" --type network_ssd --size-gibibytes ${storageSizeGb} --block-size-bytes 4096 --parent-id ${projectId} --format json`,
+          { timeout: 120000, env: storageEnv },
+          (err, stdout, stderr) => {
+            if (err) {
+              eventLog.error('STORAGE', 'Filesystem creation failed', { storageName, error: stderr || err.message });
+            } else {
+              try {
+                const fsData = JSON.parse(stdout);
+                const fsId = fsData?.metadata?.id || 'unknown';
+                eventLog.info('STORAGE', 'Filesystem created', { storageName, fsId, sizeGb: storageSizeGb });
+              } catch (e) {
+                eventLog.info('STORAGE', 'Filesystem created', { storageName });
+              }
+            }
+          }
+        );
+      } else if (storage === 'bucket') {
+        storageLabel = `Bucket: ${storageName} (${storageSizeGb} GB)`;
+        eventLog.info('STORAGE', 'Creating bucket', { storageName, region, projectId });
+        exec(
+          `nebius ${profileFlag} storage bucket create --name "${storageName}" --parent-id ${projectId} --format json`,
+          { timeout: 120000, env: storageEnv },
+          (err, stdout, stderr) => {
+            if (err) {
+              eventLog.error('STORAGE', 'Bucket creation failed', { storageName, error: stderr || err.message });
+            } else {
+              eventLog.info('STORAGE', 'Bucket created', { storageName });
+            }
+          }
+        );
+      } else if (storage === 'postgresql') {
+        storageLabel = `PostgreSQL: ${storageName} (${storageSizeGb} GB)`;
+        eventLog.info('DATABASE', 'Creating PostgreSQL cluster', { storageName, region, projectId });
+        exec(
+          `nebius ${profileFlag} msp postgresql cluster create --name "${storageName}" --parent-id ${projectId} --format json`,
+          { timeout: 300000, env: storageEnv },
+          (err, stdout, stderr) => {
+            if (err) {
+              eventLog.error('DATABASE', 'PostgreSQL cluster creation failed', { storageName, error: stderr || err.message });
+            } else {
+              eventLog.info('DATABASE', 'PostgreSQL cluster created', { storageName });
+            }
+          }
+        );
+      }
+    }
+
     res.json({
       status: 'deploying',
       name,
@@ -1551,7 +1861,8 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
       platform: regionConfig.cpuPlatform || 'cpu-e2',
       preset: regionConfig.cpuPreset || 'default',
       publicIp: wantPublicIp,
-      message: `Deploying ${imageConfig.name} to ${regionConfig.name} (${regionConfig.cpuPlatform || 'cpu-e2'} / ${regionConfig.cpuPreset || 'default'}${wantPublicIp ? '' : ' / private IP'})...`
+      storage: storageLabel || null,
+      message: `Deploying ${imageConfig.name} to ${regionConfig.name} (${regionConfig.cpuPlatform || 'cpu-e2'} / ${regionConfig.cpuPreset || 'default'}${wantPublicIp ? '' : ' / private IP'}${storageLabel ? ` + ${storageLabel}` : ''})...`
     });
 
   } catch (err) {

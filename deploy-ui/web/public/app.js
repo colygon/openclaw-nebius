@@ -1,13 +1,19 @@
 // ── State ────────────────────────────────────────────────────────────────────
 let state = {
+  selectedTarget: 'cloud',      // 'cloud' | 'local' | 'docker'
   selectedImage: null,
   selectedModel: null,
   selectedRegion: null,
+  selectedProject: null,
+  selectedProjectName: null,
   selectedPlatform: 'cpu',      // 'gpu' | 'cpu' | 'custom'
   customPlatformValue: null,    // 'platform:preset' e.g. 'gpu-h100-sxm:1gpu-16vcpu-200gb'
   selectedProvider: 'token-factory',
   selectedNetwork: 'private',    // 'public' | 'private'
-  authenticated: false
+  selectedStorage: 'filesystem', // 'bucket' | 'filesystem' | 'postgresql' | null (none)
+  storageSize: 100,              // disk size in GB
+  authenticated: false,
+  canOAuth: false                // true when running on localhost
 };
 
 // Terminal state
@@ -89,6 +95,32 @@ function updateThemeIcons(theme) {
   document.querySelectorAll('.theme-icon').forEach(el => {
     el.textContent = theme === 'dark' ? '☀️' : '🌙';
   });
+}
+
+// ── Toast Notifications ────────────────────────────────────────────────────
+let _lastToastMsg = '';
+let _lastToastTime = 0;
+function showToast(message, type = 'info') {
+  // Deduplicate rapid identical toasts
+  const now = Date.now();
+  if (message === _lastToastMsg && now - _lastToastTime < 3000) return;
+  _lastToastMsg = message;
+  _lastToastTime = now;
+
+  let container = document.getElementById('toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toast-container';
+    container.style.cssText = 'position:fixed;top:1rem;right:1rem;z-index:9999;display:flex;flex-direction:column;gap:0.5rem;pointer-events:none;';
+    document.body.appendChild(container);
+  }
+  const toast = document.createElement('div');
+  const colors = { success: 'var(--green)', warning: 'var(--orange)', error: 'var(--red)', info: 'var(--text-dim)' };
+  toast.style.cssText = `pointer-events:auto;padding:0.6rem 1rem;border-radius:var(--radius-sm);background:var(--bg-card);border:1px solid ${colors[type] || colors.info};color:var(--text);font-size:0.85rem;box-shadow:0 4px 12px rgba(0,0,0,0.2);opacity:0;transition:opacity 0.3s;`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  requestAnimationFrame(() => { toast.style.opacity = '1'; });
+  setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 4000);
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
@@ -179,39 +211,56 @@ function setupDelegatedListeners() {
 async function authFetch(url, options = {}) {
   let res = await fetch(url, options);
   if (res.status === 401) {
-    // Check if token expired
     try {
       const body = await res.clone().json();
       if (body.expired) {
-        // Session expired — show login screen with message
         state.authenticated = false;
-        show('login-screen');
-        hide('main-app');
-        hide('bottom-dock');
-        document.getElementById('login-hint').textContent = 'Session expired. Please log in again.';
+        updateIamStatus(false, null, 'Session expired — please reconnect your Nebius token.');
+        showToast('Session expired. Reconnect on the Quick Start page.', 'warning');
+        switchPage('deploy');
         return res;
       }
     } catch (e) {}
-    // Try re-authenticating
     const authRes = await fetch('/api/auth/status');
     const authData = await authRes.json();
     if (authData.authenticated) {
       res = await fetch(url, options);
     } else {
       state.authenticated = false;
-      show('login-screen');
-      hide('main-app');
-      hide('bottom-dock');
-      document.getElementById('login-hint').textContent = authData.expired
-        ? 'Session expired. Please log in again.'
-        : 'Please log in to continue.';
+      updateIamStatus(false, null, 'Not authenticated — connect your Nebius token to continue.');
+      showToast('Connect your Nebius IAM token on the Quick Start page.', 'warning');
+      switchPage('deploy');
     }
   }
   return res;
 }
 
+// ── OAuth Login ──────────────────────────────────────────────────────────────
+function loginWithNebius() {
+  window.location.href = '/api/auth/login';
+}
+
 // ── Auth ─────────────────────────────────────────────────────────────────────
 async function checkAuth() {
+  // Always show main app — no login screen
+  show('main-app');
+  show('bottom-dock');
+
+  // Check for OAuth error in URL (redirect from callback)
+  const params = new URLSearchParams(window.location.search);
+  const authError = params.get('auth_error');
+  if (authError) {
+    showToast('Login failed: ' + authError, 'error');
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+
+  // Check if OAuth login is available (localhost)
+  try {
+    const oauthRes = await fetch('/api/auth/can-oauth');
+    const oauthData = await oauthRes.json();
+    state.canOAuth = !!oauthData.canOAuth;
+  } catch (e) { state.canOAuth = false; }
+
   try {
     const res = await fetch('/api/auth/status');
     const data = await res.json();
@@ -219,70 +268,108 @@ async function checkAuth() {
     if (data.authenticated) {
       state.authenticated = true;
       state.demo = !!data.demo;
-      show('main-app');
-      show('bottom-dock');
-      hide('login-screen');
       document.getElementById('user-info').textContent = data.user;
-      // Set avatar initials
       const initials = (data.user || '?').split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
       document.getElementById('user-avatar').textContent = initials;
 
-      // Show session expiry indicator if <30 min remaining
       if (data.tokenExpiresIn != null && data.tokenExpiresIn < 1800 && !data.demo) {
         const mins = Math.floor(data.tokenExpiresIn / 60);
         showToast(`Session expires in ${mins} min`, 'warning');
       }
 
-      // Show demo banner if in demo mode, prototype banner otherwise
       if (state.demo) {
         showDemoBanner();
       } else {
         showPrototypeBanner();
       }
 
-      loadImages();
-      loadModels();
-      loadRegions();
-      loadPlatformCards();
-      loadProviders();
-      loadEndpoints();
-      loadMysteryBoxSecrets();
+      updateIamStatus(true, data.user);
     } else {
-      show('login-screen');
-      hide('main-app');
-      hide('bottom-dock');
-      if (data.expired) {
-        document.getElementById('login-hint').textContent = 'Session expired. Please log in again.';
-      } else if (data.error) {
-        document.getElementById('login-hint').textContent = data.error;
-      }
+      state.authenticated = false;
+      state.demo = false;
+      updateIamStatus(false);
     }
   } catch (err) {
-    show('login-screen');
-    document.getElementById('login-hint').textContent = 'Cannot reach server';
+    state.authenticated = false;
+    updateIamStatus(false, null, 'Cannot reach server');
+  }
+
+  updateSidebarFooter();
+  syncGsIamStatus();
+  syncEpIamStatus();
+
+  // Load UI config (these don't need auth)
+  loadTargetCards();
+  loadImages();
+  loadModels();
+  loadRegions();
+  loadPlatformCards();
+  loadStorageCards();
+  loadProviders();
+  updateTargetVisibility();
+
+  // Only load data that needs auth if actually authenticated
+  if (state.authenticated) {
+    loadEndpoints();
+    loadMysteryBoxSecrets();
   }
 }
 
-function login() {
-  // Show the token paste form
-  document.getElementById('login-btn').style.display = 'none';
-  document.getElementById('token-form').style.display = 'block';
-  document.getElementById('login-hint').textContent = '';
-  setTimeout(() => document.getElementById('token-input').focus(), 100);
+// ── IAM Token (inline on Quick Start page) ─────────────────────────────────
+function updateIamStatus(connected, user, error) {
+  const el = document.getElementById('iam-token-status');
+  const input = document.getElementById('iam-token-input');
+  const btn = document.getElementById('iam-token-submit');
+  const oauthRow = document.getElementById('deploy-oauth-row');
+  const tokenRow = document.getElementById('deploy-token-row');
+  const formHint = document.getElementById('deploy-form-hint');
+  if (!el) return;
+
+  if (connected) {
+    el.innerHTML = `<span class="iam-connected"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Connected as <strong>${esc(user)}</strong></span>`;
+    el.classList.remove('hidden');
+    if (oauthRow) oauthRow.style.display = 'none';
+    if (tokenRow) tokenRow.style.display = 'none';
+    if (formHint) formHint.style.display = 'none';
+    btn.textContent = 'Reconnect';
+    btn.onclick = () => { if (tokenRow) tokenRow.style.display = ''; if (formHint) formHint.style.display = ''; input.value = ''; input.focus(); btn.textContent = 'Connect'; btn.onclick = submitIamToken; };
+    // Add disconnect button if not already present
+    let disconnectBtn = btn.parentElement.querySelector('.btn-disconnect');
+    if (!disconnectBtn) {
+      disconnectBtn = document.createElement('button');
+      disconnectBtn.className = 'btn btn-sm btn-ghost btn-disconnect';
+      disconnectBtn.textContent = 'Disconnect';
+      disconnectBtn.onclick = logout;
+      btn.parentElement.appendChild(disconnectBtn);
+    }
+    disconnectBtn.style.display = '';
+  } else {
+    if (error) {
+      el.innerHTML = `<span class="iam-error">${esc(error)}</span>`;
+      el.classList.remove('hidden');
+    } else {
+      el.innerHTML = '<span class="iam-hint">Connect your Nebius account to deploy endpoints</span>';
+      el.classList.remove('hidden');
+    }
+    // Always show Login button as primary, token paste as fallback
+    if (oauthRow) oauthRow.style.display = '';
+    if (tokenRow) tokenRow.style.display = 'none';
+    if (formHint) formHint.style.display = 'none';
+    btn.textContent = 'Connect';
+    btn.onclick = submitIamToken;
+    const disconnectBtn = btn.parentElement?.querySelector('.btn-disconnect');
+    if (disconnectBtn) disconnectBtn.style.display = 'none';
+  }
 }
 
-async function submitToken() {
-  const input = document.getElementById('token-input');
+async function submitIamToken() {
+  const input = document.getElementById('iam-token-input');
   const token = input.value.trim();
-  if (!token) {
-    document.getElementById('login-hint').textContent = 'Please paste your access token';
-    return;
-  }
+  if (!token) { input.focus(); return; }
 
-  const btn = document.getElementById('token-submit-btn');
+  const btn = document.getElementById('iam-token-submit');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Verifying...';
-  document.getElementById('login-hint').textContent = '';
 
   try {
     const res = await fetch('/api/auth/token', {
@@ -293,35 +380,439 @@ async function submitToken() {
     const data = await res.json();
 
     if (data.authenticated) {
-      // Clear the token from the input
       input.value = '';
-      checkAuth();
+      state.authenticated = true;
+      state.demo = false;
+      document.getElementById('user-info').textContent = data.user;
+      const initials = (data.user || '?').split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
+      document.getElementById('user-avatar').textContent = initials;
+      updateIamStatus(true, data.user);
+      updateSidebarFooter();
+      showToast('Connected to Nebius', 'success');
+      loadEndpoints();
+      loadMysteryBoxSecrets();
     } else {
-      document.getElementById('login-hint').textContent = data.error || 'Invalid token';
-      btn.disabled = false;
-      btn.innerHTML = 'Verify & Login';
+      updateIamStatus(false, null, data.error || 'Invalid token');
     }
   } catch (err) {
-    document.getElementById('login-hint').textContent = 'Connection error: ' + err.message;
-    btn.disabled = false;
-    btn.innerHTML = 'Verify & Login';
+    updateIamStatus(false, null, 'Connection error: ' + err.message);
   }
-}
 
-function cancelLogin() {
-  document.getElementById('token-form').style.display = 'none';
-  document.getElementById('login-btn').style.display = '';
-  document.getElementById('token-input').value = '';
-  document.getElementById('login-hint').textContent = '';
+  btn.disabled = false;
+  btn.innerHTML = 'Connect';
 }
 
 async function logout() {
   await fetch('/api/auth/logout', { method: 'POST' });
   state.authenticated = false;
-  show('login-screen');
-  hide('main-app');
-  hide('bottom-dock');
+  state.demo = false;
+  updateIamStatus(false);
+  updateSidebarFooter();
+  showToast('Disconnected from Nebius', 'info');
 }
+
+// ── Getting Started IAM Token ──────────────────────────────────────────────
+async function submitGsIamToken() {
+  const input = document.getElementById('gs-iam-token-input');
+  const token = input.value.trim();
+  if (!token) { input.focus(); return; }
+
+  const btn = document.getElementById('gs-iam-token-submit');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+
+  try {
+    const res = await fetch('/api/auth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token })
+    });
+    const data = await res.json();
+
+    if (data.authenticated) {
+      input.value = '';
+      state.authenticated = true;
+      state.demo = false;
+      document.getElementById('user-info').textContent = data.user;
+      const initials = (data.user || '?').split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
+      document.getElementById('user-avatar').textContent = initials;
+      updateIamStatus(true, data.user);
+      updateSidebarFooter();
+      syncGsIamStatus();
+      showToast('Connected to Nebius', 'success');
+      loadEndpoints();
+      loadMysteryBoxSecrets();
+    } else {
+      const el = document.getElementById('gs-iam-token-status');
+      if (el) el.innerHTML = `<span class="iam-error">${esc(data.error || 'Invalid token')}</span>`;
+    }
+  } catch (err) {
+    const el = document.getElementById('gs-iam-token-status');
+    if (el) el.innerHTML = `<span class="iam-error">Connection error: ${esc(err.message)}</span>`;
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = 'Connect';
+}
+
+function syncGsIamStatus() {
+  const el = document.getElementById('gs-iam-token-status');
+  const input = document.getElementById('gs-iam-token-input');
+  const btn = document.getElementById('gs-iam-token-submit');
+  const oauthRow = document.getElementById('gs-oauth-row');
+  const tokenRow = document.getElementById('gs-token-row');
+  if (!el) return;
+
+  if (state.authenticated) {
+    const user = document.getElementById('user-info')?.textContent || 'Connected';
+    el.innerHTML = `<span class="iam-connected"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Connected as <strong>${esc(user)}</strong></span>`;
+    if (oauthRow) oauthRow.style.display = 'none';
+    if (tokenRow) tokenRow.style.display = 'none';
+    if (btn) {
+      btn.textContent = 'Reconnect';
+      btn.onclick = () => { if (tokenRow) tokenRow.style.display = ''; input.value = ''; input.focus(); btn.textContent = 'Connect'; btn.onclick = submitGsIamToken; };
+      let dc = btn.parentElement.querySelector('.btn-disconnect');
+      if (!dc) { dc = document.createElement('button'); dc.className = 'btn btn-sm btn-ghost btn-disconnect'; dc.textContent = 'Disconnect'; dc.onclick = logout; btn.parentElement.appendChild(dc); }
+      dc.style.display = '';
+    }
+  } else {
+    el.innerHTML = '';
+    // Always show Login button as primary, token paste as fallback
+    if (oauthRow) oauthRow.style.display = '';
+    if (tokenRow) tokenRow.style.display = 'none';
+    if (btn) { btn.textContent = 'Connect'; btn.onclick = submitGsIamToken; const dc = btn.parentElement?.querySelector('.btn-disconnect'); if (dc) dc.style.display = 'none'; }
+  }
+}
+
+// ── Sidebar Footer State ───────────────────────────────────────────────────
+function updateSidebarFooter() {
+  const connected = document.getElementById('sidebar-footer-connected');
+  const disconnected = document.getElementById('sidebar-footer-disconnected');
+  if (!connected || !disconnected) return;
+  if (state.authenticated) {
+    connected.style.display = '';
+    disconnected.style.display = 'none';
+  } else {
+    connected.style.display = 'none';
+    disconnected.style.display = '';
+  }
+}
+
+// ── Section Toggle ─────────────────────────────────────────────────────────
+function toggleSection(sectionId) {
+  const body = document.getElementById(sectionId);
+  if (!body) return;
+  const header = body.previousElementSibling;
+  body.classList.toggle('collapsed');
+  if (header) header.classList.toggle('collapsed');
+}
+
+// ── Endpoints Page IAM Token ───────────────────────────────────────────────
+function syncEpIamStatus() {
+  const el = document.getElementById('ep-iam-token-status');
+  const input = document.getElementById('ep-iam-token-input');
+  const btn = document.getElementById('ep-iam-token-submit');
+  const connStatus = document.getElementById('nebius-connection-status');
+  const oauthRow = document.getElementById('ep-oauth-row');
+  const tokenRow = document.getElementById('ep-token-row');
+  if (!el) return;
+
+  const formHint = document.getElementById('ep-form-hint');
+
+  if (state.authenticated) {
+    const user = document.getElementById('user-info')?.textContent || 'Connected';
+    el.innerHTML = `<span class="iam-connected"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Connected as <strong>${esc(user)}</strong></span>`;
+    if (oauthRow) oauthRow.style.display = 'none';
+    if (tokenRow) tokenRow.style.display = 'none';
+    if (formHint) formHint.style.display = 'none';
+    if (btn) {
+      btn.textContent = 'Reconnect';
+      btn.onclick = () => { if (tokenRow) tokenRow.style.display = ''; if (formHint) formHint.style.display = ''; input.value = ''; input.focus(); btn.textContent = 'Connect'; btn.onclick = submitEpIamToken; };
+      let dc = btn.parentElement.querySelector('.btn-disconnect');
+      if (!dc) { dc = document.createElement('button'); dc.className = 'btn btn-sm btn-ghost btn-disconnect'; dc.textContent = 'Disconnect'; dc.onclick = logout; btn.parentElement.appendChild(dc); }
+      dc.style.display = '';
+    }
+    if (connStatus) connStatus.innerHTML = '<span class="status-dot status-dot-green"></span> Connected';
+  } else {
+    el.innerHTML = '<span class="iam-hint">Connect your Nebius account to manage cloud endpoints</span>';
+    // Show Login button as primary, token paste as fallback
+    if (oauthRow) oauthRow.style.display = '';
+    if (tokenRow) tokenRow.style.display = 'none';
+    if (formHint) formHint.style.display = 'none';
+    if (btn) { btn.textContent = 'Connect'; btn.onclick = submitEpIamToken; const dc = btn.parentElement?.querySelector('.btn-disconnect'); if (dc) dc.style.display = 'none'; }
+    if (connStatus) connStatus.innerHTML = '<span class="status-dot status-dot-dim"></span> Not connected';
+  }
+}
+
+async function submitEpIamToken() {
+  const input = document.getElementById('ep-iam-token-input');
+  const token = input.value.trim();
+  if (!token) { input.focus(); return; }
+
+  const btn = document.getElementById('ep-iam-token-submit');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+
+  try {
+    const res = await fetch('/api/auth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token })
+    });
+    const data = await res.json();
+
+    if (data.authenticated) {
+      input.value = '';
+      state.authenticated = true;
+      state.demo = false;
+      document.getElementById('user-info').textContent = data.user;
+      const initials = (data.user || '?').split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
+      document.getElementById('user-avatar').textContent = initials;
+      updateIamStatus(true, data.user);
+      syncEpIamStatus();
+      updateSidebarFooter();
+      showToast('Connected to Nebius', 'success');
+      loadEndpoints();
+      loadMysteryBoxSecrets();
+    } else {
+      const el = document.getElementById('ep-iam-token-status');
+      el.innerHTML = `<span class="iam-error">${esc(data.error || 'Invalid token')}</span>`;
+    }
+  } catch (err) {
+    const el = document.getElementById('ep-iam-token-status');
+    el.innerHTML = `<span class="iam-error">Connection error: ${esc(err.message)}</span>`;
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = 'Connect';
+}
+
+// ── Local Instances ────────────────────────────────────────────────────────
+let localInstancesCache = [];
+let localGatewayAvailable = false;
+
+let localGatewayInfo = null;
+
+function updateGatewayBadge() {
+  const total = endpointsCache.length + localInstancesCache.length;
+  const badge = document.getElementById('endpoints-count');
+  const dockBadge = document.getElementById('dock-endpoints-count');
+  if (total > 0) {
+    if (badge) { badge.textContent = total; badge.classList.remove('hidden'); }
+    if (dockBadge) { dockBadge.textContent = total; dockBadge.classList.remove('hidden'); }
+  } else {
+    if (badge) badge.classList.add('hidden');
+    if (dockBadge) dockBadge.classList.add('hidden');
+  }
+}
+
+async function loadLocalInstances() {
+  const list = document.getElementById('unified-instances-list');
+  if (!list) return;
+  if (endpointsCache.length === 0 && localInstancesCache.length === 0) {
+    list.innerHTML = '<div class="mb-loading"><span class="spinner"></span> Scanning...</div>';
+  }
+
+  try {
+    const res = await fetch('/api/local-instances');
+    const data = await res.json();
+    localGatewayAvailable = data.gatewayAvailable;
+    localGatewayInfo = data.gateway || null;
+    localInstancesCache = data.instances || [];
+    updateGatewayBadge();
+    renderUnifiedInstances();
+  } catch (err) {
+    renderUnifiedInstances();
+  }
+}
+
+function renderUnifiedInstances() {
+  const list = document.getElementById('unified-instances-list');
+  if (!list) return;
+
+  const cards = [];
+
+  // Local gateway card
+  if (localGatewayAvailable && localGatewayInfo) {
+    const gwUrl = esc(localGatewayInfo.url || `http://${localGatewayInfo.host}:${localGatewayInfo.port}`);
+    const gwHost = esc(localGatewayInfo.host || '127.0.0.1');
+    cards.push(`
+      <div class="instance-card" onclick="toggleInstanceExpand(this, event)">
+        <div class="instance-icon">🖥️</div>
+        <div class="instance-info">
+          <div class="instance-name">${gwHost} <span class="instance-ip">(${esc(localGatewayInfo.host)}:${esc(String(localGatewayInfo.port))})</span></div>
+          <div class="instance-meta">
+            <span class="instance-status"><span class="status-dot status-dot-green"></span> Active</span>
+            <span class="instance-meta-sep">·</span>
+            <span class="instance-role role-gateway">gateway</span>
+            <span class="instance-meta-sep">·</span> local
+          </div>
+        </div>
+        <div class="instance-actions">
+          <button class="btn btn-sm btn-action-pill btn-terminal" onclick="openTerminal('${esc(localGatewayInfo.host)}','gateway')">Terminal</button>
+          <a href="${gwUrl}" target="_blank" class="btn btn-sm btn-action-pill btn-dashboard">Dashboard</a>
+        </div>
+        <div class="instance-details">
+          <div class="instance-details-grid">
+            <div class="instance-detail"><span class="instance-detail-label">Type</span><span class="instance-detail-value">Gateway</span></div>
+            <div class="instance-detail"><span class="instance-detail-label">Host</span><span class="instance-detail-value"><code>${esc(localGatewayInfo.host)}</code></span></div>
+            <div class="instance-detail"><span class="instance-detail-label">Port</span><span class="instance-detail-value"><code>${esc(String(localGatewayInfo.port))}</code></span></div>
+            <div class="instance-detail"><span class="instance-detail-label">URL</span><span class="instance-detail-value"><code>${gwUrl}</code> <button class="copy-btn" onclick="navigator.clipboard.writeText('${gwUrl}');event.stopPropagation()">📋</button></span></div>
+            ${localGatewayInfo.health?.status ? `<div class="instance-detail"><span class="instance-detail-label">Health</span><span class="instance-detail-value">${esc(localGatewayInfo.health.status)}</span></div>` : ''}
+          </div>
+        </div>
+      </div>`);
+  }
+
+  // Local presence instances
+  cards.push(...localInstancesCache.map(inst => {
+    const name = esc(inst.host || inst.instanceId || 'Unknown');
+    const ip = esc(inst.ip || '');
+    const version = esc(inst.version || '');
+    const device = esc(inst.deviceFamily || '');
+    const model = esc(inst.modelIdentifier || '');
+    const mode = esc(inst.mode || 'unknown');
+    const ageMs = inst.ts ? Date.now() - inst.ts : null;
+    const isActive = ageMs !== null && ageMs < 300000;
+    const statusClass = isActive ? 'status-dot-green' : 'status-dot-dim';
+    const statusText = isActive ? 'Active' : 'Stale';
+
+    const icon = mode === 'gateway' ? '🖥️' : mode === 'webchat' ? '💬' : mode === 'node' ? '📱' : '💻';
+    const roleColors = { gateway: 'role-gateway', node: 'role-node', webchat: 'role-webchat', local: 'role-local', ui: 'role-ui' };
+    const roleClass = roleColors[mode] || 'role-default';
+    const metaParts = [version, device && model ? `${device} · ${model}` : device || model].filter(Boolean);
+
+    const ageFmt = ageMs !== null ? (ageMs < 60000 ? Math.floor(ageMs / 1000) + 's ago' : Math.floor(ageMs / 60000) + 'm ago') : '';
+
+    return `
+      <div class="instance-card" onclick="toggleInstanceExpand(this, event)">
+        <div class="instance-icon">${icon}</div>
+        <div class="instance-info">
+          <div class="instance-name">${name}${ip ? ` <span class="instance-ip">(${ip})</span>` : ''}</div>
+          <div class="instance-meta">
+            <span class="instance-status"><span class="status-dot ${statusClass}"></span> ${statusText}</span>
+            ${metaParts.length ? '<span class="instance-meta-sep">·</span> ' + esc(metaParts.join(' · ')) : ''}
+            <span class="instance-role ${roleClass}">${mode}</span>
+            <span class="instance-meta-sep">·</span> local
+          </div>
+        </div>
+        <div class="instance-actions">
+          ${ip ? `<button class="btn btn-sm btn-action-pill btn-terminal" onclick="openTerminal('${ip}','${name}')">Terminal</button>` : ''}
+          ${ip ? `<a href="http://${ip}:18789/" target="_blank" class="btn btn-sm btn-action-pill btn-dashboard">Dashboard</a>` : ''}
+        </div>
+        <div class="instance-details">
+          <div class="instance-details-grid">
+            <div class="instance-detail"><span class="instance-detail-label">Mode</span><span class="instance-detail-value">${mode}</span></div>
+            ${ip ? `<div class="instance-detail"><span class="instance-detail-label">IP</span><span class="instance-detail-value"><code>${ip}</code> <button class="copy-btn" onclick="navigator.clipboard.writeText('${ip}');event.stopPropagation()">📋</button></span></div>` : ''}
+            ${version ? `<div class="instance-detail"><span class="instance-detail-label">Version</span><span class="instance-detail-value">${version}</span></div>` : ''}
+            ${device ? `<div class="instance-detail"><span class="instance-detail-label">Device</span><span class="instance-detail-value">${device}${model ? ' · ' + model : ''}</span></div>` : ''}
+            ${ageFmt ? `<div class="instance-detail"><span class="instance-detail-label">Last Seen</span><span class="instance-detail-value">${ageFmt}</span></div>` : ''}
+          </div>
+        </div>
+      </div>`;
+  }));
+
+  // Cloud endpoints as instance cards
+  cards.push(...endpointsCache.map(ep => {
+    const name = esc(ep.name || ep.id);
+    const ip = esc(ep.publicIp || ep.privateIp || '');
+    const isRunning = ep.state === 'RUNNING';
+    const statusClass = isRunning ? 'status-dot-green' : (ep.state === 'STARTING' || ep.state === 'CREATING') ? 'status-dot-orange' : 'status-dot-dim';
+    const statusText = formatState(ep.state);
+    const regionInfo = ep.regionFlag ? `${ep.regionFlag} ${esc(ep.regionName || ep.region)}` : esc(ep.region || '');
+    const modelInfo = ep.health?.model || ep.model || '';
+
+    const icon = (ep.image || '').includes('nemoclaw') ? '🔱' : '🦞';
+
+    const platformInfo = ep.platform ? formatPlatform(ep.platform) : '';
+    const presetInfo = ep.preset ? formatPreset(ep.preset) : '';
+    const imageInfo = ep.image || '';
+    const healthService = ep.health?.service || '';
+    const healthInference = ep.health?.inference || '';
+
+    return `
+      <div class="instance-card" data-endpoint-id="${esc(ep.id)}" onclick="toggleInstanceExpand(this, event)">
+        <div class="instance-icon">${icon}</div>
+        <div class="instance-info">
+          <div class="instance-name">${name}${ip ? ` <span class="instance-ip">(${ip})</span>` : ''}</div>
+          <div class="instance-meta">
+            <span class="instance-status"><span class="status-dot ${statusClass}"></span> ${statusText}</span>
+            ${modelInfo ? `<span class="instance-meta-sep">·</span> ${esc(modelInfo)}` : ''}
+            ${regionInfo ? `<span class="instance-meta-sep">·</span> ${regionInfo}` : ''}
+            <span class="instance-role role-node">cloud</span>
+            ${ep.createdAt ? `<span class="instance-meta-sep">·</span> <span class="instance-age">${formatDate(ep.createdAt)}</span>` : ''}
+          </div>
+        </div>
+        <div class="instance-actions">
+          ${isRunning && ip ? `<button class="btn btn-sm btn-action-pill btn-terminal" onclick="openTerminal('${esc(ip)}','${esc(ep.name)}')">Terminal</button>` : ''}
+          ${isRunning && ip ? `<a href="http://${esc(ip)}:18789/" target="_blank" class="btn btn-sm btn-action-pill btn-dashboard">Dashboard</a>` : ''}
+          <div class="instance-kebab">
+            <button class="instance-kebab-btn" onclick="toggleInstanceMenu(this, event)">&#x22EE;</button>
+            <div class="instance-menu hidden">
+              ${isRunning
+                ? `<button class="instance-menu-item" onclick="stopEndpoint('${esc(ep.id)}','${esc(ep.name)}')">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                    Stop
+                  </button>`
+                : `<button class="instance-menu-item" onclick="startEndpoint('${esc(ep.id)}','${esc(ep.name)}')">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    Start
+                  </button>`
+              }
+              <button class="instance-menu-item danger" onclick="deleteEndpoint('${esc(ep.id)}','${esc(ep.name)}')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="instance-details">
+          <div class="instance-details-grid">
+            <div class="instance-detail"><span class="instance-detail-label">ID</span><span class="instance-detail-value"><code>${esc(ep.id)}</code> <button class="copy-btn" onclick="navigator.clipboard.writeText('${esc(ep.id)}');event.stopPropagation()">📋</button></span></div>
+            ${ip ? `<div class="instance-detail"><span class="instance-detail-label">IP Address</span><span class="instance-detail-value"><code>${ip}</code> <button class="copy-btn" onclick="navigator.clipboard.writeText('${ip}');event.stopPropagation()">📋</button></span></div>` : ''}
+            ${regionInfo ? `<div class="instance-detail"><span class="instance-detail-label">Region</span><span class="instance-detail-value">${regionInfo}</span></div>` : ''}
+            ${platformInfo ? `<div class="instance-detail"><span class="instance-detail-label">Platform</span><span class="instance-detail-value">${esc(platformInfo)}</span></div>` : ''}
+            ${presetInfo ? `<div class="instance-detail"><span class="instance-detail-label">Resources</span><span class="instance-detail-value">${esc(presetInfo)}</span></div>` : ''}
+            ${modelInfo ? `<div class="instance-detail"><span class="instance-detail-label">Model</span><span class="instance-detail-value">${esc(modelInfo)}</span></div>` : ''}
+            ${healthService ? `<div class="instance-detail"><span class="instance-detail-label">Service</span><span class="instance-detail-value">${esc(healthService)}</span></div>` : ''}
+            ${healthInference ? `<div class="instance-detail"><span class="instance-detail-label">Inference</span><span class="instance-detail-value">${esc(healthInference)}</span></div>` : ''}
+            ${imageInfo ? `<div class="instance-detail"><span class="instance-detail-label">Image</span><span class="instance-detail-value"><code style="font-size:0.65rem">${esc(imageInfo)}</code></span></div>` : ''}
+            ${ep.createdAt ? `<div class="instance-detail"><span class="instance-detail-label">Created</span><span class="instance-detail-value">${formatDate(ep.createdAt)}</span></div>` : ''}
+          </div>
+        </div>
+      </div>`;
+  }));
+
+  if (cards.length === 0) {
+    list.innerHTML = '<p class="empty-state">No gateways found. Deploy one or start a local gateway.</p>';
+  } else {
+    list.innerHTML = cards.join('');
+  }
+}
+
+function refreshAllEndpoints() {
+  loadLocalInstances();
+  if (state.authenticated) loadEndpoints();
+}
+
+function toggleInstanceExpand(card, event) {
+  // Don't expand when clicking buttons, links, or menus
+  if (event.target.closest('a, button, .instance-kebab, .instance-menu')) return;
+  card.classList.toggle('expanded');
+}
+
+function toggleInstanceMenu(btn, event) {
+  event.stopPropagation();
+  const menu = btn.nextElementSibling;
+  // Close all other menus
+  document.querySelectorAll('.instance-menu').forEach(m => { if (m !== menu) m.classList.add('hidden'); });
+  menu.classList.toggle('hidden');
+}
+
+// Close instance menus on outside click
+document.addEventListener('click', () => {
+  document.querySelectorAll('.instance-menu').forEach(m => m.classList.add('hidden'));
+});
 
 // ── Page Navigation ─────────────────────────────────────────────────────────
 function switchPage(page) {
@@ -341,8 +832,11 @@ function switchPage(page) {
   if (target) target.classList.remove('hidden');
 
   // Refresh data when switching pages
-  if (page === 'endpoints') loadEndpoints();
-  if (page === 'registry') loadRegistries();
+  if (page === 'endpoints') {
+    loadLocalInstances();
+    if (state.authenticated) loadEndpoints();
+    syncEpIamStatus();
+  }
   if (page === 'chat') initChat();
 
 }
@@ -364,7 +858,7 @@ async function loadImages() {
         ? `<div class="card-source">${esc(img.sourceUrl)}</div>`
         : '';
       card.innerHTML = `
-        <div class="card-icon">${esc(img.icon)}</div>
+        <div class="card-icon">${key === 'openclaw' ? '<img src="/favicon.svg" alt="OpenClaw" class="card-icon-img">' : key === 'nemoclaw' ? '<img src="/nvidia.svg" alt="NemoClaw" class="card-icon-img">' : key === 'custom' ? '<img src="/docker.png" alt="Custom" class="card-icon-img">' : esc(img.icon)}</div>
         <div class="card-title">${esc(img.name)}</div>
         <div class="card-desc">${esc(img.description)}</div>
         ${sourceHtml}
@@ -382,6 +876,15 @@ async function loadImages() {
   }
 }
 
+// NemoClaw minimum requirements (from docs.nvidia.com/nemoclaw)
+const NEMOCLAW_REQUIREMENTS = {
+  minVcpu: 4,
+  minRamGb: 8,
+  minDiskGb: 20,
+  recommendedRamGb: 16,
+  recommendedDiskGb: 40
+};
+
 function selectImage(key) {
   state.selectedImage = key;
 
@@ -395,11 +898,43 @@ function selectImage(key) {
   if (key === 'custom') {
     customInput.classList.remove('hidden');
     loadRegistryImagesForPicker();
+    initBuildDialog();
   } else {
     customInput.classList.add('hidden');
   }
 
+  // Show/hide NemoClaw requirements notice
+  showNemoClawRequirements(key === 'nemoclaw');
+
   updateDeployButton();
+}
+
+function showNemoClawRequirements(show) {
+  let notice = document.getElementById('nemoclaw-requirements');
+  if (show) {
+    if (!notice) {
+      notice = document.createElement('div');
+      notice.id = 'nemoclaw-requirements';
+      notice.className = 'nemoclaw-requirements';
+      notice.innerHTML = `
+        <div class="nemoclaw-req-header">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <strong>NemoClaw Minimum Requirements</strong>
+        </div>
+        <div class="nemoclaw-req-grid">
+          <div class="nemoclaw-req-item"><span class="nemoclaw-req-label">CPU</span><span class="nemoclaw-req-value">${NEMOCLAW_REQUIREMENTS.minVcpu}+ vCPU</span></div>
+          <div class="nemoclaw-req-item"><span class="nemoclaw-req-label">RAM</span><span class="nemoclaw-req-value">${NEMOCLAW_REQUIREMENTS.minRamGb} GB min · ${NEMOCLAW_REQUIREMENTS.recommendedRamGb} GB recommended</span></div>
+          <div class="nemoclaw-req-item"><span class="nemoclaw-req-label">Disk</span><span class="nemoclaw-req-value">${NEMOCLAW_REQUIREMENTS.minDiskGb} GB min · ${NEMOCLAW_REQUIREMENTS.recommendedDiskGb} GB recommended</span></div>
+        </div>
+        <p class="nemoclaw-req-note">Image is ~2.4 GB compressed. Machines with &lt;8 GB RAM may need swap configured.</p>
+      `;
+      const imageCards = document.getElementById('image-cards');
+      imageCards.parentElement.insertBefore(notice, imageCards.nextSibling);
+    }
+    notice.classList.remove('hidden');
+  } else if (notice) {
+    notice.classList.add('hidden');
+  }
 }
 
 async function loadRegistryImagesForPicker() {
@@ -414,7 +949,11 @@ async function loadRegistryImagesForPicker() {
     }
 
     if (registriesCache.length === 0) {
-      list.innerHTML = '<div class="text-dim" style="font-size:0.8rem;padding:0.5rem">No registries found. Build an image first.</div>';
+      if (state.canOAuth) {
+        list.innerHTML = '<div style="padding:0.5rem"><button class="btn btn-primary btn-sm btn-oauth-login" onclick="loginWithNebius()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Login with Nebius</button><div class="text-dim" style="font-size:0.75rem;margin-top:0.35rem">Login to see your container registries.</div></div>';
+      } else {
+        list.innerHTML = '<div class="text-dim" style="font-size:0.8rem;padding:0.5rem"><a href="#" onclick="switchPage(\'deploy\');return false">Connect to Registry</a> — connect your Nebius IAM token to see registries.</div>';
+      }
       return;
     }
 
@@ -584,8 +1123,26 @@ async function loadTokenFactoryModels() {
       `;
     }).join('');
   } catch (err) {
-    list.innerHTML = `<div class="mb-empty">Failed to load models: ${esc(err.message)}</div>`;
+    list.innerHTML = `
+      <div class="model-picker-auth">
+        <p class="text-dim" style="font-size:0.85rem;margin:0 0 0.5rem">Enter your Token Factory API key to browse models</p>
+        <div class="api-key-row" style="max-width:500px">
+          <input type="password" id="model-picker-api-key" placeholder="Paste Token Factory API key (starts with v1.)" onkeydown="if(event.key==='Enter')retryLoadModelsWithKey()" autocomplete="off" />
+          <button class="btn btn-sm btn-primary" onclick="retryLoadModelsWithKey()">Load Models</button>
+        </div>
+        <span class="form-hint" style="margin-top:0.25rem;display:block">Get a key at <strong>tokenfactory.nebius.com</strong></span>
+      </div>`;
   }
+}
+
+function retryLoadModelsWithKey() {
+  const keyInput = document.getElementById('model-picker-api-key');
+  const key = keyInput?.value?.trim();
+  if (!key) { keyInput?.focus(); return; }
+  // Set the TF API key field so loadTokenFactoryModels picks it up
+  const tfInput = document.getElementById('tf-api-key');
+  if (tfInput) tfInput.value = key;
+  loadTokenFactoryModels();
 }
 
 function selectTokenFactoryModel(modelId, el) {
@@ -608,48 +1165,158 @@ function selectTokenFactoryModel(modelId, el) {
 }
 
 // ── Load Regions ─────────────────────────────────────────────────────────────
-async function loadRegions() {
-  try {
-    const res = await authFetch('/api/regions');
-    const regions = await res.json();
-    const grid = document.getElementById('region-cards');
-    grid.innerHTML = '';
+const REGIONS = {
+  'eu-north1':   { name: 'EU North (Finland)', flag: '🇫🇮' },
+  'eu-west1':    { name: 'EU West (Paris)',     flag: '🇫🇷' },
+  'us-central1': { name: 'US Central',          flag: '🇺🇸' }
+};
 
-    const keys = Object.keys(regions);
-    for (const [key, region] of Object.entries(regions)) {
-      const card = document.createElement('div');
-      card.className = 'select-card';
-      card.dataset.key = key;
-      card.innerHTML = `
-        <div class="card-icon">${esc(region.flag)}</div>
-        <div class="card-title">${esc(region.name)}</div>
-        <div class="card-desc">${esc(key)}</div>
-      `;
-      card.onclick = () => selectRegion(key);
-      grid.appendChild(card);
-    }
+function loadRegions() {
+  const grid = document.getElementById('region-cards');
+  if (!grid) return;
+  grid.innerHTML = '';
 
-    // Default: select first region (eu-north1)
-    if (keys.length > 0 && !state.selectedRegion) {
-      selectRegion(keys[0]);
-    }
+  const keys = Object.keys(REGIONS);
+  for (const [key, region] of Object.entries(REGIONS)) {
+    const card = document.createElement('div');
+    card.className = 'select-card';
+    card.dataset.key = key;
+    card.innerHTML = `
+      <div class="card-icon">${esc(region.flag)}</div>
+      <div class="card-title">${esc(region.name)}</div>
+      <div class="card-desc">${esc(key)}</div>
+    `;
+    card.onclick = () => selectRegion(key);
+    grid.appendChild(card);
+  }
 
-  } catch (err) {
-    console.error('Failed to load regions:', err);
+  if (keys.length > 0 && !state.selectedRegion) {
+    selectRegion(keys[0]);
   }
 }
 
 function selectRegion(key) {
   state.selectedRegion = key;
+  state.selectedProject = null;
 
   document.querySelectorAll('#region-cards .select-card').forEach(c => {
     c.classList.toggle('selected', c.dataset.key === key);
+  });
+
+  loadProjects(key);
+  updateDeployButton();
+}
+
+async function loadProjects(region) {
+  const container = document.getElementById('region-projects');
+  if (!container) return;
+  container.classList.remove('hidden');
+
+  if (!state.authenticated) {
+    container.innerHTML = '<p class="projects-hint">Connect your Nebius IAM token to see projects</p>';
+    return;
+  }
+
+  container.innerHTML = '<div class="mb-loading"><span class="spinner"></span> Loading projects...</div>';
+
+  try {
+    const res = await authFetch(`/api/projects/${encodeURIComponent(region)}`);
+    const data = await res.json();
+    const projects = data.projects || [];
+
+    if (projects.length === 0) {
+      container.innerHTML = '<p class="projects-hint">No projects found in this region</p>';
+      return;
+    }
+
+    container.innerHTML = projects.map(p => `
+      <div class="project-item${state.selectedProject === p.id ? ' selected' : ''}" data-id="${esc(p.id)}" onclick="selectProject('${esc(p.id)}', '${esc(p.name)}')">
+        <span class="project-name">${esc(p.name)}</span>
+        <span class="project-id">${esc(p.id)}</span>
+      </div>
+    `).join('');
+
+    // Auto-select first project if none selected
+    if (!state.selectedProject && projects.length > 0) {
+      selectProject(projects[0].id, projects[0].name);
+    }
+  } catch (err) {
+    container.innerHTML = '<p class="projects-hint">Failed to load projects</p>';
+  }
+}
+
+function selectProject(id, name) {
+  state.selectedProject = id;
+  state.selectedProjectName = name;
+
+  document.querySelectorAll('.project-item').forEach(el => {
+    el.classList.toggle('selected', el.dataset.id === id);
   });
 
   updateDeployButton();
 }
 
 // ── Platform Selection ───────────────────────────────────────────────────────
+
+// ── Deploy Target ──────────────────────────────────────────────────────────
+const DEPLOY_TARGETS = {
+  'cloud': {
+    icon: '☁️',
+    name: 'Serverless Cloud',
+    desc: 'Deploy to Nebius Cloud infrastructure'
+  },
+  'local': {
+    icon: '💻',
+    name: 'Local Computer',
+    desc: 'Run directly on this machine'
+  },
+  'docker': {
+    icon: '<img src="/docker.png" alt="Docker" class="card-icon-img">',
+    name: 'Docker Container',
+    desc: 'Run in a local Docker container'
+  }
+};
+
+function loadTargetCards() {
+  const grid = document.getElementById('target-cards');
+  if (!grid) return;
+  grid.innerHTML = '';
+  for (const [key, target] of Object.entries(DEPLOY_TARGETS)) {
+    const card = document.createElement('div');
+    card.className = 'select-card' + (key === state.selectedTarget ? ' selected' : '');
+    card.dataset.key = key;
+    card.innerHTML = `
+      <div class="card-icon">${target.icon}</div>
+      <div class="card-title">${esc(target.name)}</div>
+      <div class="card-desc">${esc(target.desc)}</div>
+    `;
+    card.onclick = () => selectTarget(key);
+    grid.appendChild(card);
+  }
+}
+
+function selectTarget(key) {
+  state.selectedTarget = key;
+  document.querySelectorAll('#target-cards .select-card').forEach(c => {
+    c.classList.toggle('selected', c.dataset.key === key);
+  });
+  updateTargetVisibility();
+  updateDeployButton();
+}
+
+function updateTargetVisibility() {
+  const isCloud = state.selectedTarget === 'cloud';
+
+  // Platform, Region, Network, Storage steps — cloud only
+  document.getElementById('step-platform')?.classList.toggle('hidden', !isCloud);
+  document.getElementById('step-region')?.classList.toggle('hidden', !isCloud);
+  document.getElementById('step-network')?.classList.toggle('hidden', !isCloud);
+  document.getElementById('step-storage')?.classList.toggle('hidden', !isCloud);
+  // Provider step is always visible (all targets need an API provider)
+
+  // IAM token is cloud-only; API keys are needed for all targets
+  document.getElementById('iam-token-group')?.classList.toggle('hidden', !isCloud);
+}
 
 const PLATFORMS = {
   'cpu': {
@@ -865,6 +1532,55 @@ function selectNetwork(network) {
   updateDeployButton();
 }
 
+// ── Storage ─────────────────────────────────────────────────────────────────
+const STORAGE_OPTIONS = {
+  filesystem: { icon: '📁', name: 'Filesystem',  desc: 'Shared filesystem mount (NFS)' },
+  bucket:     { icon: '🪣', name: 'Bucket',     desc: 'Object storage for files and media' },
+  postgresql: { icon: '🐘', name: 'PostgreSQL',  desc: 'Managed relational database' }
+};
+
+function loadStorageCards() {
+  const grid = document.getElementById('storage-cards');
+  if (!grid) return;
+  grid.innerHTML = '';
+
+  for (const [key, info] of Object.entries(STORAGE_OPTIONS)) {
+    const card = document.createElement('div');
+    card.className = 'select-card' + (key === state.selectedStorage ? ' selected' : '');
+    card.dataset.storage = key;
+    card.innerHTML = `
+      <div class="card-icon">${info.icon}</div>
+      <div class="card-title">${esc(info.name)}</div>
+      <div class="card-desc">${esc(info.desc)}</div>
+    `;
+    card.onclick = () => selectStorage(key);
+    grid.appendChild(card);
+  }
+}
+
+function selectStorage(key) {
+  // Toggle — clicking the same card deselects it
+  if (state.selectedStorage === key) {
+    state.selectedStorage = null;
+  } else {
+    state.selectedStorage = key;
+  }
+  document.querySelectorAll('#storage-cards .select-card').forEach(c => {
+    c.classList.toggle('selected', c.dataset.storage === state.selectedStorage);
+  });
+  // Show/hide size row based on selection
+  const sizeRow = document.getElementById('storage-size-row');
+  if (sizeRow) sizeRow.style.display = state.selectedStorage ? '' : 'none';
+  updateDeployButton();
+}
+
+function updateStorageSize(val) {
+  const size = Math.max(10, Math.min(10000, parseInt(val) || 100));
+  state.storageSize = size;
+  const input = document.getElementById('storage-size-input');
+  if (input && parseInt(input.value) !== size) input.value = size;
+}
+
 function getActiveApiKey() {
   switch (state.selectedProvider) {
     case 'token-factory':
@@ -887,10 +1603,17 @@ function buildSummaryGrid() {
 
   const cards = [];
 
+  // Deploy Target
+  if (state.selectedTarget) {
+    const t = DEPLOY_TARGETS[state.selectedTarget];
+    cards.push({ label: 'Platform', icon: t?.icon || '☁️', value: t?.name || state.selectedTarget, step: 'target' });
+  }
+
   // Agent
   if (state.selectedImage) {
     const imgCard = document.querySelector(`#image-cards .select-card[data-key="${state.selectedImage}"]`);
-    const icon = imgCard?.querySelector('.card-icon')?.textContent || '🤖';
+    const iconEl = imgCard?.querySelector('.card-icon');
+    const icon = iconEl?.querySelector('img') ? iconEl.innerHTML : (iconEl?.textContent || '🤖');
     const name = imgCard?.querySelector('.card-title')?.textContent || state.selectedImage;
     cards.push({ label: 'Agent', icon, value: name, step: 'image' });
   }
@@ -903,29 +1626,38 @@ function buildSummaryGrid() {
     cards.push({ label: 'Model', icon, value: name, step: 'model' });
   }
 
-  // Region
-  if (state.selectedRegion) {
-    const regCard = document.querySelector(`#region-cards .select-card[data-key="${state.selectedRegion}"]`);
-    const icon = regCard?.querySelector('.card-icon')?.textContent || '🌍';
-    const name = regCard?.querySelector('.card-title')?.textContent || state.selectedRegion;
-    cards.push({ label: 'Region', icon, value: name, step: 'region' });
+  // Cloud-only summary cards
+  if (state.selectedTarget === 'cloud') {
+    // Region
+    if (state.selectedRegion) {
+      const regCard = document.querySelector(`#region-cards .select-card[data-key="${state.selectedRegion}"]`);
+      const icon = regCard?.querySelector('.card-icon')?.textContent || '🌍';
+      const name = regCard?.querySelector('.card-title')?.textContent || state.selectedRegion;
+      cards.push({ label: 'Region', icon, value: name, step: 'region' });
+    }
+    // Platform
+    if (state.selectedPlatform) {
+      const p = PLATFORMS[state.selectedPlatform];
+      cards.push({ label: 'Compute', icon: p?.icon || '⚡', value: p?.name || state.selectedPlatform, step: 'platform' });
+    }
+
+    // Network
+    cards.push({
+      label: 'Network',
+      icon: state.selectedNetwork === 'public' ? '🌐' : '🔒',
+      value: state.selectedNetwork === 'public' ? 'Public IP' : 'Private IP',
+      step: 'network'
+    });
+
+    // Storage
+    if (state.selectedStorage) {
+      const s = STORAGE_OPTIONS[state.selectedStorage];
+      cards.push({ label: 'Storage', icon: s?.icon || '💾', value: `${s?.name || state.selectedStorage} · ${state.storageSize} GB`, step: 'storage' });
+    }
+
   }
 
-  // Platform
-  if (state.selectedPlatform) {
-    const p = PLATFORMS[state.selectedPlatform];
-    cards.push({ label: 'Platform', icon: p?.icon || '⚡', value: p?.name || state.selectedPlatform, step: 'platform' });
-  }
-
-  // Network
-  cards.push({
-    label: 'Network',
-    icon: state.selectedNetwork === 'public' ? '🌐' : '🔒',
-    value: state.selectedNetwork === 'public' ? 'Public IP' : 'Private IP',
-    step: 'network'
-  });
-
-  // Provider
+  // Provider (all targets)
   if (state.selectedProvider) {
     const pr = PROVIDERS[state.selectedProvider];
     cards.push({ label: 'Provider', icon: pr?.icon || '🏭', value: pr?.name || state.selectedProvider, step: 'provider' });
@@ -933,7 +1665,7 @@ function buildSummaryGrid() {
 
   grid.innerHTML = cards.map(c => `
     <div class="summary-card" onclick="openCustomizeStep('${c.step}')">
-      <div class="sc-icon">${esc(c.icon)}</div>
+      <div class="sc-icon">${c.icon.startsWith('<') ? c.icon : esc(c.icon)}</div>
       <div class="sc-label">${esc(c.label)}</div>
       <div class="sc-value">${esc(c.value)}</div>
     </div>
@@ -964,6 +1696,7 @@ function openCustomizeStep(step) {
 
   // Scroll to the relevant step
   const stepMap = {
+    target: '#target-cards',
     image: '#image-cards',
     model: '#model-cards',
     region: '#region-cards',
@@ -1127,9 +1860,28 @@ async function saveToMysteryBox(provider) {
 // ── Deploy ───────────────────────────────────────────────────────────────────
 function updateDeployButton() {
   const btn = document.getElementById('deploy-btn');
-  const baseReady = !!(state.selectedImage && state.selectedModel && state.selectedRegion);
-  const platformReady = state.selectedPlatform !== 'custom' || !!state.customPlatformValue;
+  const isCloud = state.selectedTarget === 'cloud';
+  const baseReady = !!(state.selectedImage && state.selectedModel && (!isCloud || state.selectedRegion));
+  const platformReady = !isCloud || state.selectedPlatform !== 'custom' || !!state.customPlatformValue;
   btn.disabled = !(baseReady && platformReady);
+
+  // NemoClaw preset check — warn if selected preset is below minimum
+  const nemoWarn = document.getElementById('nemoclaw-preset-warning');
+  if (state.selectedImage === 'nemoclaw' && isCloud && state.selectedPlatform === 'cpu') {
+    // Default CPU preset is 2vcpu-8gb which meets minimum, but show a note
+    if (!nemoWarn) {
+      const warn = document.createElement('div');
+      warn.id = 'nemoclaw-preset-warning';
+      warn.className = 'nemoclaw-req-note';
+      warn.style.cssText = 'color:var(--orange);padding:0.5rem 0;font-size:0.8rem';
+      warn.textContent = 'Tip: NemoClaw requires at least 4 vCPU and 8 GB RAM. Use Custom platform for larger configurations.';
+      const deploySection = btn.closest('.deploy-section');
+      if (deploySection) deploySection.insertBefore(warn, btn);
+    }
+  } else if (nemoWarn) {
+    nemoWarn.remove();
+  }
+
   // Update the summary grid when not in customize mode
   if (!customizeMode) buildSummaryGrid();
 }
@@ -1159,13 +1911,16 @@ async function deploy() {
       imageType: state.selectedImage,
       model: state.selectedModel,
       region: state.selectedRegion,
+      projectId: state.selectedProject,
       platform: state.selectedPlatform,
       platformPreset: state.selectedPlatform === 'custom' ? state.customPlatformValue : null,
       provider: state.selectedProvider,
       customImage: document.getElementById('custom-image-url')?.value || '',
       endpointName: document.getElementById('endpoint-name').value || '',
       apiKey: apiKey,
-      usePublicIp: state.selectedNetwork === 'public'
+      usePublicIp: state.selectedNetwork === 'public',
+      storage: state.selectedTarget === 'cloud' ? state.selectedStorage : null,
+      storageSize: state.selectedTarget === 'cloud' && state.selectedStorage ? state.storageSize : null
     };
 
     const res = await authFetch('/api/deploy', {
@@ -1182,6 +1937,7 @@ async function deploy() {
         <strong>${esc(data.message)}</strong><br>
         Endpoint: <code>${esc(data.name)}</code><br>
         Image: <code>${esc(data.image)}</code><br>
+        ${data.storage ? `Storage: <code>${esc(data.storage)}</code><br>` : ''}
         <em>Refresh endpoints list in ~60s to see it running.</em>
       `;
 
@@ -1215,8 +1971,6 @@ async function deploy() {
 
 // ── Endpoints ────────────────────────────────────────────────────────────────
 async function loadEndpoints() {
-  const list = document.getElementById('endpoints-list');
-  list.innerHTML = '<div class="mb-loading"><span class="spinner"></span> Loading endpoints...</div>';
   try {
     const res = await authFetch('/api/endpoints');
     if (!res.ok) throw new Error('Failed to load');
@@ -1224,23 +1978,11 @@ async function loadEndpoints() {
 
     // Store in cache
     endpointsCache = endpoints;
-
-    // Update sidebar badge + dock badge
-    const badge = document.getElementById('endpoints-count');
-    const dockBadge = document.getElementById('dock-endpoints-count');
-    if (endpoints.length > 0) {
-      badge.textContent = endpoints.length;
-      badge.classList.remove('hidden');
-      if (dockBadge) { dockBadge.textContent = endpoints.length; dockBadge.classList.remove('hidden'); }
-    } else {
-      badge.classList.add('hidden');
-      if (dockBadge) dockBadge.classList.add('hidden');
-    }
-
-    renderEndpoints();
+    updateGatewayBadge();
+    renderUnifiedInstances();
   } catch (err) {
-    const list = document.getElementById('endpoints-list');
-    list.innerHTML = `<p class="empty-state">Could not load endpoints: ${esc(err.message)}</p>`;
+    // Silently fail — unified list will just show local instances
+    renderUnifiedInstances();
   }
 }
 
@@ -1390,24 +2132,25 @@ let registriesCache = [];
 let selectedBuildType = 'openclaw';
 
 async function loadRegistries() {
-  const list = document.getElementById('registries-list');
-  list.innerHTML = '<div class="mb-loading"><span class="spinner"></span> Loading registries...</div>';
-
+  // Registry browsing moved into deploy page custom agent section
+  // This function now only refreshes the registries cache
   try {
     const res = await authFetch('/api/registries');
-    if (!res.ok) throw new Error('Failed to load');
-    registriesCache = await res.json();
-    renderRegistries();
-  } catch (err) {
-    list.innerHTML = `<p class="empty-state">Could not load registries: ${esc(err.message)}</p>`;
-  }
+    if (res.ok) registriesCache = await res.json();
+  } catch (err) { /* ignore */ }
 }
 
 function renderRegistries() {
   const list = document.getElementById('registries-list');
 
   if (registriesCache.length === 0) {
-    list.innerHTML = '<p class="empty-state">No registries found. Deploy an endpoint to auto-create one.</p>';
+    if (state.canOAuth) {
+      list.innerHTML = `<div style="padding:0.5rem"><button class="btn btn-primary btn-sm btn-oauth-login" onclick="loginWithNebius()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Login with Nebius</button><div class="text-dim" style="font-size:0.75rem;margin-top:0.35rem">Login to see your container registries.</div></div>`;
+    } else {
+      list.innerHTML = `<p class="empty-state">
+        No registries found. <a href="#" onclick="switchPage('deploy');return false" style="color:var(--action-blue);font-weight:600">Connect to Registry</a> — connect your Nebius IAM token on the Install page to see your registries.
+      </p>`;
+    }
     return;
   }
 
@@ -1483,29 +2226,15 @@ async function toggleRegistryImages(registryId, region) {
   }
 }
 
-async function showBuildDialog() {
-  const dialog = document.getElementById('build-dialog');
-  dialog.classList.remove('hidden');
-
-  // Populate region selector from all available regions
+function initBuildDialog() {
+  // Populate region selector from hardcoded REGIONS
   const select = document.getElementById('build-region');
-  if (select.options.length <= 1) {
-    select.innerHTML = '';
-    try {
-      const regRes = await authFetch('/api/regions');
-      if (regRes.ok) {
-        const regions = await regRes.json();
-        for (const [key, info] of Object.entries(regions)) {
-          const opt = document.createElement('option');
-          opt.value = key;
-          opt.textContent = `${info.flag || ''} ${info.name || key}`;
-          select.appendChild(opt);
-        }
-      }
-    } catch (_) {}
-    if (select.options.length === 0) {
-      select.innerHTML = '<option value="eu-north1">EU North (Finland)</option>';
-    }
+  if (!select || select.options.length > 0) return;
+  for (const [key, info] of Object.entries(REGIONS)) {
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = `${info.flag || ''} ${info.name || key}`;
+    select.appendChild(opt);
   }
 
   // Load source for the currently selected build type
@@ -1514,9 +2243,11 @@ async function showBuildDialog() {
   }
 }
 
+// Legacy aliases (no-ops since build dialog is now inline)
+function showBuildDialog() { initBuildDialog(); }
 function hideBuildDialog() {
-  document.getElementById('build-dialog').classList.add('hidden');
-  document.getElementById('build-log').classList.add('hidden');
+  const log = document.getElementById('build-log');
+  if (log) log.classList.add('hidden');
 }
 
 function selectBuildType(el) {
@@ -1602,7 +2333,8 @@ async function startBuild() {
 
           if (status.status === 'success') {
             logContent.textContent += '\n\n=== BUILD SUCCESSFUL ===\n';
-            loadRegistries(); // Refresh registry list
+            registriesCache = []; // Clear cache so picker reloads
+            loadRegistryImagesForPicker(); // Refresh image picker
           } else {
             logContent.textContent += '\n\n=== BUILD FAILED ===\n';
           }
@@ -1969,39 +2701,9 @@ function autoPairApprove(ip, token) {
   }).catch(() => {}); // ignore errors
 }
 
-// ── Demo Banner ──────────────────────────────────────────────────────────────
-function showDemoBanner() {
-  const banner = document.createElement('div');
-  banner.className = 'demo-banner';
-  const bannerText = document.createElement('span');
-  const bold = document.createElement('strong');
-  bold.textContent = 'Disclaimer';
-  bannerText.append('🦞 ', bold, ' — claw.moi is not supported nor endorsed by Nebius B.V. To deploy real endpoints, run locally:');
-  const cmd = document.createElement('code');
-  cmd.textContent = 'git clone https://github.com/colygon/openclaw-nebius && cd openclaw-nebius/deploy-ui/web && npm i && npm start';
-  const closeBtn = document.createElement('button');
-  closeBtn.className = 'demo-close';
-  closeBtn.textContent = '\u00d7';
-  closeBtn.addEventListener('click', () => banner.remove());
-  banner.append(bannerText, cmd, closeBtn);
-  document.body.prepend(banner);
-}
-
-function showPrototypeBanner() {
-  if (document.querySelector('.demo-banner')) return;
-  const banner = document.createElement('div');
-  banner.className = 'demo-banner';
-  const bannerText = document.createElement('span');
-  const bold = document.createElement('strong');
-  bold.textContent = 'Disclaimer';
-  bannerText.append('🦞 ', bold, ' — openclaw-deploy and claw.moi is not supported nor endorsed by Nebius B.V.');
-  const closeBtn = document.createElement('button');
-  closeBtn.className = 'demo-close';
-  closeBtn.textContent = '\u00d7';
-  closeBtn.addEventListener('click', () => banner.remove());
-  banner.append(bannerText, closeBtn);
-  document.body.prepend(banner);
-}
+// ── Banners (removed) ───────────────────────────────────────────────────────
+function showDemoBanner() {}
+function showPrototypeBanner() {}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function show(id) { document.getElementById(id).classList.remove('hidden'); }

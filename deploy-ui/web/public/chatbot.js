@@ -14,6 +14,11 @@ const CHAT_PROVIDERS = [
 
 let cs = null; // current chat session
 
+function autoResizeChatInput(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+}
+
 // ── Public entry point ─────────────────────────────────────────────────────
 
 function initChat() {
@@ -23,7 +28,9 @@ function initChat() {
     step: null,
     imageType: null,  imageName: null,  customImage: null,
     model: null,      modelName: null,
+    target: 'cloud',  targetName: 'Serverless Cloud',
     region: null,     regionName: null,
+    projectId: null,  projectName: null,
     platform: null,   platformName: null,
     platformPreset: null, platformPresetLabel: null,
     provider: 'token-factory', providerName: 'Token Factory', providerHint: 'v1.xxx...',
@@ -38,8 +45,8 @@ function initChat() {
   setInputMode(false);
 
   (async () => {
-    await botMsg("Hey! I'll walk you through deploying a gateway on Nebius Cloud 🦞\n\nTap an option or type its number at each step.\n\nFirst up — which gateway image? Each one comes pre-configured with different tools and capabilities.");
-    await loadAndShowGateways();
+    await botMsg("Hey! I'll walk you through deploying an AI agent 🦞\n\nYou can deploy to the cloud, run locally, or use Docker.\n\nTap an option or type its number at each step.\n\nFirst up — which agent image?");
+    await loadAndShowAgents();
   })();
 }
 
@@ -142,7 +149,7 @@ function scrollChat() {
 
 // ── State machine ──────────────────────────────────────────────────────────
 
-async function loadAndShowGateways() {
+async function loadAndShowAgents() {
   let imageOptions;
   try {
     const res = await authFetch('/api/images');
@@ -153,22 +160,26 @@ async function loadAndShowGateways() {
     }));
   } catch (_) {
     imageOptions = [
-      { num: 1, id: 'openclaw', label: '🦞 OpenClaw', desc: 'General-purpose gateway — serverless CPU' },
-      { num: 2, id: 'nemoclaw', label: '🔱 NemoClaw', desc: 'GPU-accelerated gateway — H200 VM' },
+      { num: 1, id: 'openclaw', label: '🦞 OpenClaw', desc: 'General-purpose agent — serverless CPU' },
+      { num: 2, id: 'nemoclaw', label: '🔱 NemoClaw', desc: 'GPU-accelerated agent — H200 VM' },
       { num: 3, id: 'custom',   label: '📦 Custom',   desc: 'Use your own Docker image URL' },
     ];
   }
-  cs.step = 'gateway';
+  cs.step = 'agent';
   showOptions(imageOptions, async (opt) => {
     userMsg(`${opt.num} — ${opt.label.replace(/^\S+\s/, '')}`);
     cs.imageType = opt.id;
     cs.imageName = opt.name || opt.label.replace(/^\S+\s/, '');
     if (opt.id === 'custom') {
-      await botMsg('What\'s the Docker image URL for your gateway?');
-      setInputMode(true, 'docker.io/myuser/mygateway:latest');
+      await botMsg('What\'s the Docker image URL for your agent?');
+      setInputMode(true, 'docker.io/myuser/myagent:latest');
       cs.step = 'custom_image';
     } else {
-      await botMsg(`Using ${cs.imageName}.\n\nNow pick a language model — this is the LLM the gateway will use for reasoning and tool calls.`);
+      if (opt.id === 'nemoclaw') {
+        await botMsg(`Using ${cs.imageName}.\n\n⚠️ NemoClaw requires at least 4 vCPU, 8 GB RAM, and 20 GB disk (16 GB RAM recommended). The image is ~2.4 GB compressed.\n\nNow pick a language model.`);
+      } else {
+        await botMsg(`Using ${cs.imageName}.\n\nNow pick a language model — this is the LLM the agent will use for reasoning and tool calls.`);
+      }
       await stepModel();
     }
   });
@@ -191,8 +202,8 @@ async function stepModel() {
     }
     cs.model = opt.id;
     cs.modelName = opt.name;
-    await botMsg(`Using ${opt.name}.\n\nWhich region? Pick the one closest to your users for the lowest latency.`);
-    await stepRegion();
+    await botMsg(`Using ${opt.name}.\n\nWhere do you want to run the agent?`);
+    await stepTarget();
   });
 }
 
@@ -224,8 +235,8 @@ async function stepModelBrowse() {
       userMsg(`${opt.num} — ${opt.name}`);
       cs.model = opt.id;
       cs.modelName = opt.name;
-      await botMsg(`Using ${opt.name}.\n\nWhich region? Pick the one closest to your users for the lowest latency.`);
-      await stepRegion();
+      await botMsg(`Using ${opt.name}.\n\nWhere do you want to run the agent?`);
+      await stepTarget();
     });
   } catch (_) {
     hideTyping();
@@ -236,25 +247,75 @@ async function stepModelBrowse() {
 
 async function stepRegion() {
   cs.step = 'region';
-  let regionOpts;
-  try {
-    const res = await authFetch('/api/regions');
-    const regions = await res.json();
-    regionOpts = Object.entries(regions).map(([id, v], i) => ({
-      num: i + 1, id, name: v.name,
-      label: `${v.flag || ''} ${v.name}`.trim(),
-      desc: '',
-    }));
-  } catch (_) {
-    regionOpts = [{ num: 1, id: 'eu-north1', name: 'EU North (Finland)', label: '🇫🇮 EU North (Finland)' }];
-  }
+  const regionOpts = [
+    { num: 1, id: 'eu-north1',   name: 'EU North (Finland)', label: '🇫🇮 EU North (Finland)' },
+    { num: 2, id: 'eu-west1',    name: 'EU West (Paris)',     label: '🇫🇷 EU West (Paris)' },
+    { num: 3, id: 'us-central1', name: 'US Central',          label: '🇺🇸 US Central' },
+  ];
   showOptions(regionOpts, async (opt) => {
     userMsg(`${opt.num} — ${opt.name}`);
     cs.region = opt.id;
     cs.regionName = opt.name;
-    await botMsg(`Deploying to ${opt.name}.\n\nHow should the gateway run? GPU gives you a dedicated VM with the model loaded locally. CPU is serverless and starts faster, but needs an API key for inference.`);
-    await stepPlatform();
+    await botMsg(`Region set to ${opt.name}. Let me check for projects…`);
+    await stepProject();
   });
+}
+
+async function stepTarget() {
+  cs.step = 'target';
+  showOptions([
+    { num: 1, id: 'cloud',  label: '☁️ Serverless Cloud', desc: 'Deploy to Nebius Cloud infrastructure' },
+    { num: 2, id: 'local',  label: '💻 Local Computer',   desc: 'Run directly on this machine' },
+    { num: 3, id: 'docker', label: '🐳 Docker Container', desc: 'Run in a local Docker container' },
+  ], async (opt) => {
+    userMsg(`${opt.num} — ${opt.label.replace(/^\S+\s/, '')}`);
+    cs.target = opt.id;
+    cs.targetName = opt.label.replace(/^\S+\s/, '');
+    if (opt.id === 'cloud') {
+      await botMsg('Cloud deployment.\n\nWhich region? Pick the one closest to your users for the lowest latency.');
+      await stepRegion();
+    } else {
+      // Local / Docker — skip region, project, compute, network
+      await botMsg(`${cs.targetName} selected.\n\nWhich provider holds your API key?`);
+      await stepProvider();
+    }
+  });
+}
+
+async function stepProject() {
+  cs.step = 'project';
+  showTyping();
+  try {
+    const res = await authFetch(`/api/projects/${encodeURIComponent(cs.region)}`);
+    const data = await res.json();
+    hideTyping();
+    const projects = data.projects || [];
+
+    if (projects.length === 0) {
+      await botMsg('No projects found in this region. A default project will be created during deployment.\n\nHow should the agent run? GPU gives you a dedicated VM with the model loaded locally. CPU is serverless and starts faster.');
+      cs.projectId = null;
+      cs.projectName = null;
+      await stepPlatform();
+      return;
+    }
+
+    await botMsg('Which project should the endpoint be deployed in?');
+    showOptions(projects.map((p, i) => ({
+      num: i + 1, id: p.id, name: p.name, label: p.name, desc: p.id,
+    })), async (opt) => {
+      userMsg(`${opt.num} — ${opt.name}`);
+      cs.projectId = opt.id;
+      cs.projectName = opt.name;
+      await botMsg(`Using project "${opt.name}".\n\nHow should the agent run? GPU gives you a dedicated VM with the model loaded locally. CPU is serverless and starts faster.`);
+      await stepPlatform();
+    });
+  } catch (_) {
+    hideTyping();
+    await botMsg('Couldn\'t load projects — a default one will be used.\n\nHow should the agent run?');
+    cs.projectId = null;
+    cs.projectName = null;
+    await stepPlatform();
+  }
 }
 
 async function stepPlatform() {
@@ -271,7 +332,7 @@ async function stepPlatform() {
       await botMsg('GPU mode — the model runs directly on the VM. You can also add an API provider to use additional models alongside the local one.');
       await stepProvider();
     } else if (opt.id === 'cpu') {
-      await botMsg('CPU serverless mode — the gateway calls an external inference API for the model.\n\nWhich provider holds your API key?');
+      await botMsg('CPU serverless mode — the agent calls an external inference API for the model.\n\nWhich provider holds your API key?');
       await stepProvider();
     } else {
       await botMsg('Let me fetch the available compute configurations for that region…');
@@ -318,7 +379,7 @@ async function stepPlatformCustom() {
         await botMsg('GPU config set — the model runs locally. You can also add an API provider to use additional models alongside the local one.');
         await stepProvider();
       } else {
-        await botMsg('CPU config set — the gateway will call an external inference API.\n\nWhich provider holds your API key?');
+        await botMsg('CPU config set — the agent will call an external inference API.\n\nWhich provider holds your API key?');
         await stepProvider();
       }
     });
@@ -372,7 +433,7 @@ async function stepNetwork() {
 async function stepName() {
   cs.step = 'name';
   await botMsg('Enter a name for the endpoint, or press Enter to auto-generate one.');
-  setInputMode(true, 'my-gateway  (leave blank to auto-generate)');
+  setInputMode(true, 'my-agent  (leave blank to auto-generate)');
 }
 
 async function stepConfirm() {
@@ -380,14 +441,17 @@ async function stepConfirm() {
   const isGpu = cs.platform === 'gpu' ||
     (cs.platform === 'custom' && cs.platformPreset?.startsWith('gpu-'));
 
+  const isCloud = cs.target === 'cloud';
   const lines = [
     `Here's your deployment summary:\n`,
-    `• Gateway: ${cs.imageName}`,
+    `• Platform: ${cs.targetName}`,
+    `• Agent: ${cs.imageName}`,
     cs.imageType === 'custom' ? `  Image: ${cs.customImage}` : null,
     `• Model: ${cs.modelName}`,
-    `• Region: ${cs.regionName}`,
-    `• Platform: ${cs.platformName}${cs.platformPresetLabel ? ` (${cs.platformPresetLabel})` : ''}`,
-    `• Network: ${cs.networkName}`,
+    isCloud ? `• Region: ${cs.regionName}` : null,
+    isCloud && cs.projectName ? `• Project: ${cs.projectName}` : null,
+    isCloud ? `• Compute: ${cs.platformName}${cs.platformPresetLabel ? ` (${cs.platformPresetLabel})` : ''}` : null,
+    isCloud ? `• Network: ${cs.networkName}` : null,
     `• Provider: ${cs.providerName}`,
     `\nReady to deploy?`,
   ].filter(Boolean);
@@ -412,9 +476,11 @@ async function stepDeploy() {
     (cs.platform === 'custom' && cs.platformPreset?.startsWith('gpu-'));
 
   const body = {
+    target:        cs.target,
     imageType:     cs.imageType,
     model:         cs.model,
     region:        cs.region,
+    projectId:     cs.projectId,
     platform:      cs.platform,
     platformPreset: cs.platform === 'custom' ? cs.platformPreset : null,
     provider:      cs.provider,
@@ -422,6 +488,8 @@ async function stepDeploy() {
     endpointName:  cs.endpointName || '',
     apiKey:        cs.apiKey || '',
     usePublicIp:   cs.network === 'public',
+    storage:       cs.target === 'cloud' ? (cs.storage || null) : null,
+    storageSize:   cs.target === 'cloud' && cs.storage ? (cs.storageSize || 100) : null,
   };
 
   try {
@@ -437,7 +505,7 @@ async function stepDeploy() {
       await botMsg(`Your endpoint is being created! 🎉\n\n📌 Name: ${data.name}\n📦 Image: ${data.image}\n\nRefresh Endpoints in ~60 seconds to see it running.`);
       showOptions([
         { num: 1, id: 'endpoints', label: '📡 View Endpoints' },
-        { num: 2, id: 'again',     label: '🦞 Deploy another gateway' },
+        { num: 2, id: 'again',     label: '🦞 Deploy another agent' },
       ], (opt) => {
         userMsg(opt.num === 1 ? '1 — View Endpoints' : '2 — Deploy another');
         if (opt.id === 'endpoints') { switchPage('endpoints'); }
@@ -469,6 +537,7 @@ function chatSend() {
   const raw = input.value;
   const text = raw.trim();
   input.value = '';
+  autoResizeChatInput(input);
 
   // Allow typing a number to pick an option
   const optBtns = document.querySelectorAll('.chat-opt');
@@ -486,7 +555,7 @@ function chatSend() {
       cs.customImage = text;
       cs.imageName   = 'Custom (' + text.split('/').pop() + ')';
       (async () => {
-        await botMsg('Custom image set.\n\nNow pick a language model — this is the LLM the gateway will use for reasoning and tool calls.');
+        await botMsg('Custom image set.\n\nNow pick a language model — this is the LLM the agent will use for reasoning and tool calls.');
         await stepModel();
       })();
       break;
@@ -499,7 +568,12 @@ function chatSend() {
       cs.apiKey = text;
       (async () => {
         await botMsg('API key saved.');
-        await stepNetwork();
+        if (cs.target === 'cloud') {
+          await stepNetwork();
+        } else {
+          await botMsg('Last step — give the endpoint a name, or press Enter to auto-generate one.');
+          await stepName();
+        }
       })();
       break;
 
@@ -559,7 +633,12 @@ async function loadAndShowMbSecrets() {
         setInputMode(false);
         userMsg(`🔐 ${s.name || s.id} (from MysteryBox)`);
         await botMsg('API key loaded from MysteryBox.');
-        await stepNetwork();
+        if (cs.target === 'cloud') {
+          await stepNetwork();
+        } else {
+          await botMsg('Last step — give the endpoint a name, or press Enter to auto-generate one.');
+          await stepName();
+        }
       } catch (_) {
         btn.textContent = 'error';
       }
