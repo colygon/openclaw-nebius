@@ -1817,6 +1817,85 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
   }
 });
 
+// ── Routes: Chat Inference ─────────────────────────────────────────────────
+
+app.post('/api/chat/completions', async (req, res) => {
+  const { gateway, messages, model } = req.body;
+  if (!gateway || !messages || !Array.isArray(messages)) {
+    return res.status(400).json({ error: 'gateway and messages[] are required' });
+  }
+
+  try {
+    let targetUrl, headers = { 'Content-Type': 'application/json' };
+
+    if (gateway.type === 'local') {
+      // Local gateway: direct HTTP to port 18789
+      targetUrl = `http://127.0.0.1:18789/v1/chat/completions`;
+    } else if (gateway.type === 'cloud') {
+      // Cloud endpoint: use Token Factory API or direct endpoint
+      const token = getUserToken(req);
+      // Try to get the API key from deploy-time secrets or env
+      const ep = Object.values(proxyEndpointCache).find(e => e.name === gateway.name);
+      const epIp = ep?.ip || gateway.ip;
+
+      if (gateway.apiKey) {
+        // User provided API key — use Token Factory directly
+        const region = gateway.region || 'eu-north1';
+        targetUrl = `${tokenFactoryUrl(region)}/chat/completions`;
+        headers['Authorization'] = `Bearer ${gateway.apiKey}`;
+      } else if (epIp) {
+        // Direct to endpoint's inference server (port 8080)
+        targetUrl = `http://${epIp}:8080/v1/chat/completions`;
+      } else {
+        return res.status(400).json({ error: 'No API key or endpoint IP available' });
+      }
+    } else {
+      return res.status(400).json({ error: 'Invalid gateway type' });
+    }
+
+    const body = {
+      model: model || gateway.model || 'default',
+      messages,
+      stream: true
+    };
+
+    eventLog.info('CHAT', 'Inference request', { target: targetUrl, model: body.model, msgCount: messages.length });
+
+    const upstream = await fetch(targetUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body)
+    });
+
+    if (!upstream.ok) {
+      const errText = await upstream.text().catch(() => 'Unknown error');
+      eventLog.error('CHAT', 'Inference failed', { status: upstream.status, error: errText.substring(0, 200) });
+      return res.status(upstream.status).json({ error: `Inference API error: ${upstream.status}` });
+    }
+
+    // Stream SSE response back to client
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const reader = upstream.body;
+    reader.on('data', (chunk) => {
+      res.write(chunk);
+    });
+    reader.on('end', () => {
+      res.end();
+    });
+    reader.on('error', (err) => {
+      eventLog.error('CHAT', 'Stream error', { error: err.message });
+      res.end();
+    });
+
+  } catch (err) {
+    eventLog.error('CHAT', 'Chat completions error', { error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Routes: Manage ─────────────────────────────────────────────────────────
 
 app.delete('/api/endpoints/:id', requireAuth, (req, res) => {

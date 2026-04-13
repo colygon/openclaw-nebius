@@ -633,9 +633,61 @@ async function loadLocalInstances() {
     localGatewayInfo = data.gateway || null;
     localInstancesCache = data.instances || [];
     updateGatewayBadge();
+    loadChatGateways();
     renderUnifiedInstances();
   } catch (err) {
     renderUnifiedInstances();
+  }
+}
+
+function loadChatGateways() {
+  const select = document.getElementById('chat-gateway-select');
+  if (!select) return;
+
+  // Remember current selection
+  const prev = select.value;
+
+  // Clear and add default option
+  select.innerHTML = '<option value="">Deploy Assistant</option>';
+
+  // Add local gateway
+  if (localGatewayAvailable && localGatewayInfo) {
+    const h = localGatewayInfo.health || {};
+    const val = JSON.stringify({ type: 'local', name: 'Local Gateway', ip: '127.0.0.1', model: h.model || '' });
+    const opt = document.createElement('option');
+    opt.value = val;
+    opt.textContent = `🖥️ Local Gateway${h.model ? ' — ' + h.model : ''}`;
+    select.appendChild(opt);
+  }
+
+  // Add local presence instances
+  localInstancesCache.forEach(inst => {
+    if (inst.mode === 'gateway' || inst.mode === 'webchat') {
+      const val = JSON.stringify({ type: 'local', name: inst.instanceId || inst.ip, ip: inst.ip, model: inst.modelIdentifier || '' });
+      const opt = document.createElement('option');
+      opt.value = val;
+      opt.textContent = `💬 ${inst.instanceId || inst.ip}${inst.modelIdentifier ? ' — ' + inst.modelIdentifier : ''}`;
+      select.appendChild(opt);
+    }
+  });
+
+  // Add cloud endpoints
+  endpointsCache.forEach(ep => {
+    if (ep.state !== 'RUNNING') return;
+    const ip = ep.publicIp || ep.privateIp;
+    if (!ip) return;
+    const val = JSON.stringify({ type: 'cloud', name: ep.name, ip, model: ep.model || '', region: ep.region || '' });
+    const opt = document.createElement('option');
+    opt.value = val;
+    opt.textContent = `☁️ ${ep.name}${ep.model ? ' — ' + ep.model : ''}${ep.regionFlag ? ' ' + ep.regionFlag : ''}`;
+    select.appendChild(opt);
+  });
+
+  // Restore previous selection if still available
+  if (prev) {
+    for (const opt of select.options) {
+      if (opt.value === prev) { select.value = prev; return; }
+    }
   }
 }
 
@@ -850,7 +902,7 @@ function switchPage(page) {
     if (state.authenticated) loadEndpoints();
     syncEpIamStatus();
   }
-  if (page === 'chat') initChat();
+  if (page === 'chat') { loadChatGateways(); initChat(); }
 
 }
 
@@ -1992,6 +2044,7 @@ async function loadEndpoints() {
     // Store in cache
     endpointsCache = endpoints;
     updateGatewayBadge();
+    loadChatGateways();
     renderUnifiedInstances();
   } catch (err) {
     // Silently fail — unified list will just show local instances

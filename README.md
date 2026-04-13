@@ -8,7 +8,7 @@ Everything you need to run [OpenClaw](https://github.com/nichochar/openclaw) AI 
 |---|---|
 | **[`tokenfactory-plugin`](tokenfactory-plugin)** | OpenClaw provider plugin -- adds 44+ open-source models (Qwen, DeepSeek, Llama, GLM, FLUX, etc.) via Nebius Token Factory |
 | **[`nebius-skill`](nebius-skill)** | Claude Code / OpenClaw skill for deploying and managing Nebius infrastructure from your terminal |
-| **[`deploy-ui`](deploy-ui)** | Web UI for deploying OpenClaw to Nebius (live at [claw.moi](https://claw.moi)) |
+| **[`deploy-ui`](deploy-ui)** | Web UI for deploying OpenClaw to Nebius |
 | **[`deploy-scripts`](deploy-scripts)** | Shell scripts, Dockerfile, and configs for Nebius infrastructure automation |
 
 ## Getting Started
@@ -27,9 +27,16 @@ Then follow the [plugin setup guide](tokenfactory-plugin/SETUP.md) to configure 
 
 ### "I want to deploy OpenClaw on Nebius using the web UI"
 
-Open the Deploy UI at **[claw.moi](https://claw.moi)** and follow the wizard. It handles regions, platforms, images, and credentials.
+Run the Deploy UI locally:
 
-For self-hosting the deploy UI, see [deploy-ui](deploy-ui).
+```bash
+git clone https://github.com/colygon/openclaw-nebius.git
+cd openclaw-nebius
+npm install
+npm run dev:deploy
+```
+
+Then open **http://localhost:3000** and follow the wizard. It handles regions, platforms, images, and credentials.
 
 ### "I want to deploy OpenClaw on Nebius using Claude Code or another coding agent"
 

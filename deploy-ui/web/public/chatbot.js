@@ -13,10 +13,128 @@ const CHAT_PROVIDERS = [
 ];
 
 let cs = null; // current chat session
+let chatGateway = null; // { type, name, ip, model, region, apiKey }
+let inferenceMessages = []; // OpenAI-format conversation history
 
 function autoResizeChatInput(el) {
   el.style.height = 'auto';
   el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+}
+
+// ── Gateway Chat Mode ─────────────────────────────────────────────────────
+
+function selectChatGateway(value) {
+  if (!value) {
+    // Switch back to deploy assistant
+    chatGateway = null;
+    inferenceMessages = [];
+    if (cs) { cs.active = false; cs = null; }
+    initChat();
+    return;
+  }
+
+  try {
+    chatGateway = JSON.parse(value);
+  } catch (e) { return; }
+
+  inferenceMessages = [];
+  if (cs) { cs.active = false; cs = null; }
+
+  const feed = document.getElementById('chat-messages');
+  if (feed) feed.innerHTML = '';
+
+  const input = document.getElementById('chat-input');
+  const send = document.getElementById('chat-send');
+  if (input) { input.disabled = false; input.placeholder = `Message ${chatGateway.name || 'Gateway'}…`; }
+  if (send) send.disabled = false;
+
+  botMsgQueue = Promise.resolve();
+  botMsg(`Connected to **${esc(chatGateway.name)}**${chatGateway.model ? ` (${esc(chatGateway.model)})` : ''}\n\nType a message to start chatting.`, 0);
+}
+
+async function sendInferenceMessage(text) {
+  if (!chatGateway) return;
+
+  userMsg(text);
+  inferenceMessages.push({ role: 'user', content: text });
+
+  // Create streaming bot bubble
+  const feed = document.getElementById('chat-messages');
+  const row = document.createElement('div');
+  row.className = 'chat-row chat-row-bot';
+  const bubble = document.createElement('div');
+  bubble.className = 'chat-bubble chat-bubble-bot chat-streaming';
+  row.innerHTML = '<div class="chat-avatar">🦞</div>';
+  row.appendChild(bubble);
+  feed.appendChild(row);
+  scrollChat();
+
+  setInputMode(false);
+
+  let fullContent = '';
+
+  try {
+    const res = await fetch('/api/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        gateway: chatGateway,
+        messages: inferenceMessages,
+        model: chatGateway.model
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Request failed' }));
+      bubble.classList.remove('chat-streaming');
+      bubble.classList.add('chat-error');
+      bubble.textContent = err.error || 'Inference request failed';
+      setInputMode(true, `Message ${chatGateway.name}…`);
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // keep incomplete line
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const data = line.slice(6).trim();
+        if (data === '[DONE]') continue;
+
+        try {
+          const parsed = JSON.parse(data);
+          const delta = parsed.choices?.[0]?.delta?.content;
+          if (delta) {
+            fullContent += delta;
+            bubble.innerHTML = esc(fullContent).replace(/\n/g, '<br>');
+            scrollChat();
+          }
+        } catch (e) { /* skip malformed chunks */ }
+      }
+    }
+
+    bubble.classList.remove('chat-streaming');
+    if (!fullContent) {
+      bubble.textContent = '(empty response)';
+    }
+    inferenceMessages.push({ role: 'assistant', content: fullContent });
+
+  } catch (err) {
+    bubble.classList.remove('chat-streaming');
+    bubble.classList.add('chat-error');
+    bubble.textContent = `Error: ${err.message}`;
+  }
+
+  setInputMode(true, `Message ${chatGateway.name}…`);
 }
 
 // ── Public entry point ─────────────────────────────────────────────────────
@@ -538,6 +656,12 @@ function chatSend() {
   const text = raw.trim();
   input.value = '';
   autoResizeChatInput(input);
+
+  // Inference chat mode — send to gateway
+  if (chatGateway && text) {
+    sendInferenceMessage(text);
+    return;
+  }
 
   // Allow typing a number to pick an option
   const optBtns = document.querySelectorAll('.chat-opt');

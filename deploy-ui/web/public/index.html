@@ -76,10 +76,19 @@
         <div id="page-chat" class="page hidden">
           <div class="chat-layout">
             <div class="chat-header">
-              <span class="chat-header-title">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                Chat
-              </span>
+              <div class="chat-header-top">
+                <span class="chat-header-title">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                  Chat
+                </span>
+              </div>
+              <div class="chat-pill-bar">
+                <div class="chat-pill">
+                  <select id="chat-gateway-select" onchange="selectChatGateway(this.value)">
+                    <option value="">Deploy Assistant</option>
+                  </select>
+                </div>
+              </div>
             </div>
             <div id="chat-messages" class="chat-messages"></div>
             <div class="chat-footer">
