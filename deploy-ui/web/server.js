@@ -1703,6 +1703,12 @@ app.post('/api/deploy', requireAuth, async (req, res) => {
       }
     }
 
+    // Tavily search API key
+    const tavilyKey = req.body.tavilyApiKey?.trim();
+    if (tavilyKey) {
+      envFlags.push(`--env "TAVILY_API_KEY=${tavilyKey}"`);
+    }
+
     // Find SSH public key to authorize on the endpoint
     const sshKey = findSshKey();
     let sshPubKey = '';

@@ -181,6 +181,25 @@
             <div class="gs-step">
               <div class="gs-step-num">3</div>
               <div class="gs-step-body">
+                <h3>Get a Tavily API key (web search)</h3>
+                <p>OpenClaw uses <strong>Tavily</strong> for web search. Sign up and grab a free API key — your agent will be able to search the web for real-time information.</p>
+                <ul class="gs-bullets">
+                  <li>Free tier includes 1,000 searches/month</li>
+                  <li>Set as <code>TAVILY_API_KEY</code> environment variable</li>
+                  <li>Optional — agent works without it but can't search the web</li>
+                </ul>
+                <a class="btn btn-primary btn-sm gs-action" href="https://app.tavily.com" target="_blank" rel="noopener">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                  Get Tavily Key
+                </a>
+              </div>
+            </div>
+
+            <div class="gs-connector"></div>
+
+            <div class="gs-step">
+              <div class="gs-step-num">4</div>
+              <div class="gs-step-body">
                 <h3>Deploy a gateway</h3>
                 <p>Go to <strong>Deploy</strong> and work through the steps: pick your agent image, choose a model, select a region, and choose a platform. For GPU workloads no API key is required. Hit <strong>Deploy</strong> — the endpoint spins up in about a minute.</p>
                 <ul class="gs-bullets">
@@ -198,7 +217,7 @@
             <div class="gs-connector"></div>
 
             <div class="gs-step">
-              <div class="gs-step-num">4</div>
+              <div class="gs-step-num">5</div>
               <div class="gs-step-body">
                 <h3>Connect to your Gateways</h3>
                 <p>Open <strong>Gateways</strong> to see your running agents. Each active agent has two ways to connect:</p>
@@ -401,6 +420,28 @@
               </div>
               <div class="card-grid" id="provider-cards"></div>
               <p class="step-hint">All providers route inference through <strong>Nebius</strong> GPUs</p>
+            </section>
+
+            <!-- Step 9: Search Provider -->
+            <section class="step" id="step-search-provider">
+              <div class="step-header">
+                <span class="step-num">9</span>
+                <h3>Search Provider</h3>
+              </div>
+              <div class="card-grid" id="search-provider-cards"></div>
+              <div class="form-group" id="tavily-key-group" style="margin-top:0.75rem">
+                <div class="api-key-row" style="max-width:500px">
+                  <input type="password" id="tavily-api-key" placeholder="tvly-..." onkeydown="if(event.key==='Enter')this.blur()" autocomplete="off" />
+                  <button class="btn btn-sm btn-save-secret" onclick="saveToMysteryBox('tavily')" title="Save to MysteryBox">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><line x1="12" y1="15" x2="12" y2="18"/></svg>
+                    Save
+                  </button>
+                </div>
+                <div id="mb-secrets-tavily" class="mb-secrets-list"></div>
+                <span class="form-hint">
+                  Get a free key at <a href="https://app.tavily.com" target="_blank" rel="noopener"><strong>app.tavily.com</strong></a> — 1,000 searches/month on the free tier
+                </span>
+              </div>
             </section>
             </div><!-- end deploy-steps -->
 

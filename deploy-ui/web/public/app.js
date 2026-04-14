@@ -322,6 +322,7 @@ async function checkAuth() {
   loadRegions();
   loadPlatformCards();
   loadStorageCards();
+  loadSearchProviderCards();
   loadProviders();
   updateTargetVisibility();
 
@@ -1650,6 +1651,29 @@ function updateStorageSize(val) {
   if (input && parseInt(input.value) !== size) input.value = size;
 }
 
+// ── Search Provider ──────────────────────────────────────────────────────────
+const SEARCH_PROVIDERS = {
+  tavily: { icon: '🔍', name: 'Tavily', desc: 'AI-optimized web search API' }
+};
+
+function loadSearchProviderCards() {
+  const grid = document.getElementById('search-provider-cards');
+  if (!grid) return;
+  grid.innerHTML = '';
+
+  for (const [key, info] of Object.entries(SEARCH_PROVIDERS)) {
+    const card = document.createElement('div');
+    card.className = 'select-card selected';
+    card.dataset.search = key;
+    card.innerHTML = `
+      <div class="card-icon">${esc(info.icon)}</div>
+      <div class="card-title">${esc(info.name)}</div>
+      <div class="card-desc">${esc(info.desc)}</div>
+    `;
+    grid.appendChild(card);
+  }
+}
+
 function getActiveApiKey() {
   switch (state.selectedProvider) {
     case 'token-factory':
@@ -1783,7 +1807,7 @@ let mysteryBoxSecrets = []; // cached secrets
 
 async function loadMysteryBoxSecrets() {
   // Show loading in all provider secret lists
-  const containers = ['mb-secrets-tf', 'mb-secrets-openrouter', 'mb-secrets-huggingface'];
+  const containers = ['mb-secrets-tf', 'mb-secrets-openrouter', 'mb-secrets-huggingface', 'mb-secrets-tavily'];
   containers.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.innerHTML = '<div class="mb-loading"><span class="spinner"></span> Loading secrets...</div>';
@@ -1841,24 +1865,33 @@ async function selectMysteryBoxSecret(secretId, el) {
       return;
     }
     if (res.ok) {
-      // Determine which API key field to fill based on active provider
-      const fieldMap = {
-        'token-factory': 'tf-api-key',
-        'openrouter': 'openrouter-api-key',
-        'huggingface': 'huggingface-api-key'
-      };
-      const fieldId = fieldMap[state.selectedProvider] || 'tf-api-key';
-      const apiKeyField = document.getElementById(fieldId);
+      // Determine which field to fill based on which secrets list the item is in
+      const isTavily = el.closest('#mb-secrets-tavily');
+      let fieldId, value;
 
-      // Try common key names, then fall back to first value
-      const value = payload.TOKEN_API_KEY || payload.TOKEN_FACTORY_API_KEY || payload.OPENROUTER_API_KEY
-        || payload.HUGGINGFACE_API_KEY || payload.HF_TOKEN || payload.api_key || Object.values(payload)[0] || '';
+      if (isTavily) {
+        fieldId = 'tavily-api-key';
+        value = payload.TAVILY_API_KEY || payload.tavily_api_key || payload.api_key || Object.values(payload)[0] || '';
+      } else {
+        const fieldMap = {
+          'token-factory': 'tf-api-key',
+          'openrouter': 'openrouter-api-key',
+          'huggingface': 'huggingface-api-key'
+        };
+        fieldId = fieldMap[state.selectedProvider] || 'tf-api-key';
+        value = payload.TOKEN_API_KEY || payload.TOKEN_FACTORY_API_KEY || payload.OPENROUTER_API_KEY
+          || payload.HUGGINGFACE_API_KEY || payload.HF_TOKEN || payload.api_key || Object.values(payload)[0] || '';
+      }
+
+      const apiKeyField = document.getElementById(fieldId);
 
       if (value) {
         apiKeyField.value = value;
-        // Also fill Quick Start API key field
-        const qsField = document.getElementById('qs-api-key');
-        if (qsField) { qsField.value = value; updateQsDeployButton(); }
+        // Also fill Quick Start API key field (for inference keys only)
+        if (!isTavily) {
+          const qsField = document.getElementById('qs-api-key');
+          if (qsField) { qsField.value = value; updateQsDeployButton(); }
+        }
         updateDeployButton();
 
         if (badge) {
@@ -1891,9 +1924,9 @@ async function selectMysteryBoxSecret(secretId, el) {
 }
 
 async function saveToMysteryBox(provider) {
-  const fieldMap = { 'tf': 'tf-api-key', 'openrouter': 'openrouter-api-key', 'huggingface': 'huggingface-api-key' };
-  const keyNameMap = { 'tf': 'TOKEN_FACTORY_API_KEY', 'openrouter': 'OPENROUTER_API_KEY', 'huggingface': 'HF_TOKEN' };
-  const defaultNameMap = { 'tf': 'token-factory-key', 'openrouter': 'openrouter-key', 'huggingface': 'huggingface-key' };
+  const fieldMap = { 'tf': 'tf-api-key', 'openrouter': 'openrouter-api-key', 'huggingface': 'huggingface-api-key', 'tavily': 'tavily-api-key' };
+  const keyNameMap = { 'tf': 'TOKEN_FACTORY_API_KEY', 'openrouter': 'OPENROUTER_API_KEY', 'huggingface': 'HF_TOKEN', 'tavily': 'TAVILY_API_KEY' };
+  const defaultNameMap = { 'tf': 'token-factory-key', 'openrouter': 'openrouter-key', 'huggingface': 'huggingface-key', 'tavily': 'tavily-key' };
 
   const apiKeyField = document.getElementById(fieldMap[provider]);
   const value = apiKeyField?.value?.trim();
@@ -1989,7 +2022,8 @@ async function deploy() {
       apiKey: apiKey,
       usePublicIp: state.selectedNetwork === 'public',
       storage: state.selectedTarget === 'cloud' ? state.selectedStorage : null,
-      storageSize: state.selectedTarget === 'cloud' && state.selectedStorage ? state.storageSize : null
+      storageSize: state.selectedTarget === 'cloud' && state.selectedStorage ? state.storageSize : null,
+      tavilyApiKey: document.getElementById('tavily-api-key')?.value || ''
     };
 
     const res = await authFetch('/api/deploy', {
