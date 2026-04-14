@@ -207,7 +207,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Install OpenClaw CLI ──
-RUN npm install -g openclaw@2026.3.11
+RUN npm install -g openclaw@latest
 
 # ── Install NemoClaw ──
 RUN npm install -g @nvidia/nemoclaw@latest

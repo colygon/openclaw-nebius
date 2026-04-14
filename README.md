@@ -6,8 +6,8 @@ Everything you need to run [OpenClaw](https://github.com/nichochar/openclaw) AI 
 
 | Package | What it does |
 |---|---|
-| **[`tokenfactory-plugin`](tokenfactory-plugin)** | OpenClaw provider plugin -- adds 44+ open-source models (Qwen, DeepSeek, Llama, GLM, FLUX, etc.) via Nebius Token Factory |
-| **[`nebius-skill`](nebius-skill)** | Claude Code / OpenClaw skill for deploying and managing Nebius infrastructure from your terminal |
+| **[`tokenfactory-plugin`](tokenfactory-plugin)** | [Token Factory Provider Plugin](https://clawhub.ai/plugins/tokenfactory) -- adds 44+ open-source models (Qwen, DeepSeek, Llama, GLM, FLUX, etc.) via Nebius Token Factory |
+| **[`nebius-skill`](nebius-skill)** | [Nebius Cloud Skill](https://clawhub.ai/plugins/nebius) -- deploy and manage Nebius infrastructure from your terminal |
 | **[`deploy-ui`](deploy-ui)** | Web UI for deploying OpenClaw to Nebius |
 | **[`deploy-scripts`](deploy-scripts)** | Shell scripts, Dockerfile, and configs for Nebius infrastructure automation |
 
@@ -20,7 +20,7 @@ Pick the path that matches what you want to do:
 Install the provider plugin to get 44+ models:
 
 ```bash
-openclaw plugins install clawhub:@colygon/openclaw-nebius
+openclaw plugins install clawhub:tokenfactory
 ```
 
 Then follow the [plugin setup guide](tokenfactory-plugin/SETUP.md) to configure your API key.

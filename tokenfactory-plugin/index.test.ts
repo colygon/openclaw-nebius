@@ -118,7 +118,7 @@ describe("nebius provider plugin", () => {
 
   describe("constants", () => {
     it("PROVIDER_ID is 'nebius'", () => {
-      expect(PROVIDER_ID).toBe("nebius");
+      expect(PROVIDER_ID).toBe("tokenfactory");
     });
 
     it("BASE_URL points to token factory", () => {
@@ -127,11 +127,11 @@ describe("nebius provider plugin", () => {
   });
 
   describe("qualified model names", () => {
-    it("all models resolve correctly with nebius/ prefix", () => {
+    it("all models resolve correctly with tokenfactory/ prefix", () => {
       for (const m of NEBIUS_MODELS) {
         const qualified = `${PROVIDER_ID}/${m.id}`;
-        expect(qualified).toMatch(/^nebius\/.+\/.+$/);
-        expect(qualified).not.toMatch(/^nebius\/nebius\//);
+        expect(qualified).toMatch(/^tokenfactory\/.+\/.+$/);
+        expect(qualified).not.toMatch(/^tokenfactory\/tokenfactory\//);
       }
     });
   });

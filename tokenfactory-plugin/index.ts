@@ -114,7 +114,7 @@ export const NEBIUS_MODELS: NebiusModel[] = [
   ...IMAGE_MODELS,
 ];
 
-export const PROVIDER_ID = "nebius";
+export const PROVIDER_ID = "tokenfactory";
 export const BASE_URL = "https://api.tokenfactory.nebius.com/v1";
 
 // ─── Plugin entry ───────────────────────────────────────────────────────────

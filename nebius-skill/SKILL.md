@@ -20,13 +20,15 @@ argument-hint: "[service] [action] or describe what you want to deploy"
 
 metadata:
   author: colygon
-  version: "1.1.0"
+  version: "1.2.0"
   # OpenClaw extension
   openclaw:
     requires:
       bins: [nebius]
       anyBins: [kubectl, helm, docker]
-    primaryEnv: NEBIUS_PROFILE
+      env: [NEBIUS_IAM_TOKEN]
+      anyEnv: [TOKEN_FACTORY_API_KEY, NEBIUS_PROFILE]
+    primaryEnv: NEBIUS_IAM_TOKEN
     emoji: "☁️"
     os: [macos, linux]
     homepage: "https://github.com/colygon/openclaw-nebius/tree/main/nebius-skill"
@@ -392,7 +394,7 @@ After deploying OpenClaw, you can install the **Nebius provider plugin** to give
 
 **Install the plugin:**
 ```bash
-openclaw plugins install clawhub:@colygon/openclaw-nebius
+openclaw plugins install clawhub:tokenfactory
 ```
 
 **Configure the API key** (both locations needed):

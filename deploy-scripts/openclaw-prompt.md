@@ -27,7 +27,7 @@ curl -fsSL https://nvidia.com/nemoclaw.sh | bash
 If that fails, install manually via npm:
 ```
 npm install -g @nvidia/nemoclaw@latest
-npm install -g openclaw@2026.3.11
+npm install -g openclaw@latest
 ```
 
 Verify both binaries are available: `nemoclaw --version` and `openclaw --version`.

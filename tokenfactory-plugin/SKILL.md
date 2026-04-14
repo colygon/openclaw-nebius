@@ -16,10 +16,10 @@ Adds 44+ open-source models to OpenClaw via the Nebius Token Factory inference A
 
 ## Installation
 
-Run this single command to install the plugin from ClawhHub:
+Run this single command to install the plugin from ClawHub:
 
 ```bash
-openclaw plugins install clawhub:@colygon/openclaw-nebius
+openclaw plugins install clawhub:tokenfactory
 ```
 
 Then configure the API key and restart the gateway. Full steps below.
@@ -29,14 +29,14 @@ Then configure the API key and restart the gateway. Full steps below.
 ### Step 1: Install the plugin
 
 ```bash
-openclaw plugins install clawhub:@colygon/openclaw-nebius
+openclaw plugins install clawhub:tokenfactory
 ```
 
 If reinstalling, remove the old version first:
 
 ```bash
 rm -rf ~/.openclaw/extensions/nebius
-openclaw plugins install clawhub:@colygon/openclaw-nebius
+openclaw plugins install clawhub:tokenfactory
 ```
 
 ### Step 2: Get an API key
@@ -132,7 +132,7 @@ See the full catalog in [SETUP.md](SETUP.md).
 ## Troubleshooting
 
 **"plugin not found: nebius"**
-- Run `openclaw plugins install clawhub:@colygon/openclaw-nebius`
+- Run `openclaw plugins install clawhub:tokenfactory`
 - If reinstalling: `rm -rf ~/.openclaw/extensions/nebius` first
 
 **401 Unauthorized**

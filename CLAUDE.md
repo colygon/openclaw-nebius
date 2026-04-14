@@ -22,7 +22,7 @@ npm run dev:deploy   # Start the deploy web UI locally (port 3000)
 ## Key Details
 
 ### tokenfactory-plugin
-- Published as `@colygon/openclaw-nebius` on ClawhHub
+- Published as `tokenfactory` on ClawHub
 - ESM module targeting ES2022
 - Dev dependencies only: `openclaw`, `typescript`, `vitest`
 - Entry: `tokenfactory-plugin/index.ts`
