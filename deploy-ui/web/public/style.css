@@ -2076,6 +2076,37 @@ input::placeholder { color: var(--deep-navy); opacity: 0.35; }
   gap: 0.6rem;
   margin-bottom: 1rem;
 }
+
+.summary-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding: 1rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.summary-key-group label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: 0.3rem;
+}
+
+.summary-key-group .api-key-row {
+  max-width: 500px;
+}
+
+.summary-key-group .form-hint {
+  font-size: 0.75rem;
+  margin-top: 0.2rem;
+  display: block;
+}
 .summary-card {
   background: var(--bg-card);
   border: 1px solid var(--border);

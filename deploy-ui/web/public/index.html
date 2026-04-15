@@ -253,6 +253,56 @@
             <!-- Summary Mode (default) -->
             <div id="deploy-summary">
               <div id="summary-grid" class="summary-grid"></div>
+
+              <!-- API Keys (always visible in summary) -->
+              <div class="summary-keys">
+                <div class="summary-key-group">
+                  <label>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12H2"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/></svg>
+                    Nebius Cloud
+                  </label>
+                  <div class="iam-token-status" id="qs-iam-status"></div>
+                  <div id="qs-iam-oauth-row" class="oauth-login-row">
+                    <button class="btn btn-primary btn-sm btn-oauth-login" onclick="this.closest('.oauth-login-row').style.display='none';document.getElementById('qs-iam-instructions').style.display='';document.getElementById('qs-iam-row').style.display=''">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+                      Get Access Token
+                    </button>
+                  </div>
+                  <div id="qs-iam-instructions" class="token-instructions" style="display:none">
+                    <div class="token-cmd-wrap">
+                      <code class="token-cmd">nebius iam get-access-token</code>
+                      <button class="token-copy-btn" onclick="navigator.clipboard.writeText('nebius iam get-access-token')" title="Copy">📋</button>
+                    </div>
+                  </div>
+                  <div class="api-key-row" id="qs-iam-row" style="display:none">
+                    <input type="password" id="qs-iam-token-input" placeholder="Paste access token" onkeydown="if(event.key==='Enter')submitQsIamToken()" autocomplete="off" />
+                    <button class="btn btn-sm btn-primary" onclick="submitQsIamToken()">Connect</button>
+                  </div>
+                </div>
+
+                <div class="summary-key-group">
+                  <label>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                    Token Factory API Key
+                  </label>
+                  <div class="api-key-row">
+                    <input type="password" id="qs-tf-api-key" placeholder="v1.xxx..." autocomplete="off" />
+                  </div>
+                  <div id="qs-mb-secrets-tf" class="mb-secrets-list"></div>
+                </div>
+
+                <div class="summary-key-group">
+                  <label>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    Tavily API Key
+                  </label>
+                  <div class="api-key-row">
+                    <input type="password" id="qs-tavily-api-key" placeholder="tvly-..." autocomplete="off" />
+                  </div>
+                  <span class="form-hint">Free at <a href="https://app.tavily.com" target="_blank" rel="noopener">app.tavily.com</a></span>
+                </div>
+              </div>
+
               <button class="btn btn-customize btn-sm" id="customize-btn" onclick="toggleCustomize()">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
                 Customize

@@ -316,6 +316,7 @@ async function checkAuth() {
   updateSidebarFooter();
   syncGsIamStatus();
   syncEpIamStatus();
+  syncQsIamStatus();
 
   // Load UI config (these don't need auth)
   loadTargetCards();
@@ -420,6 +421,66 @@ async function submitIamToken() {
 
   btn.disabled = false;
   btn.innerHTML = 'Connect';
+}
+
+// ── Quick Start IAM Token (summary page) ──────────────────────────────────
+async function submitQsIamToken() {
+  const input = document.getElementById('qs-iam-token-input');
+  const token = input.value.trim();
+  if (!token) { input.focus(); return; }
+
+  try {
+    const res = await fetch('/api/auth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token })
+    });
+    const data = await res.json();
+
+    if (data.authenticated) {
+      input.value = '';
+      state.authenticated = true;
+      state.demo = false;
+      document.getElementById('user-info').textContent = data.user;
+      const initials = (data.user || '?').split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
+      document.getElementById('user-avatar').textContent = initials;
+      updateIamStatus(true, data.user);
+      updateSidebarFooter();
+      syncGsIamStatus();
+      syncEpIamStatus();
+      syncQsIamStatus();
+      showToast('Connected to Nebius', 'success');
+      loadEndpoints();
+      loadMysteryBoxSecrets();
+    } else {
+      const el = document.getElementById('qs-iam-status');
+      if (el) el.innerHTML = `<span class="iam-error">${esc(data.error || 'Invalid token')}</span>`;
+    }
+  } catch (err) {
+    const el = document.getElementById('qs-iam-status');
+    if (el) el.innerHTML = `<span class="iam-error">Connection error: ${esc(err.message)}</span>`;
+  }
+}
+
+function syncQsIamStatus() {
+  const el = document.getElementById('qs-iam-status');
+  const oauthRow = document.getElementById('qs-iam-oauth-row');
+  const instructions = document.getElementById('qs-iam-instructions');
+  const tokenRow = document.getElementById('qs-iam-row');
+  if (!el) return;
+
+  if (state.authenticated) {
+    const user = document.getElementById('user-info')?.textContent || 'Connected';
+    el.innerHTML = `<span class="iam-connected"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Connected as <strong>${esc(user)}</strong></span>`;
+    if (oauthRow) oauthRow.style.display = 'none';
+    if (instructions) instructions.style.display = 'none';
+    if (tokenRow) tokenRow.style.display = 'none';
+  } else {
+    el.innerHTML = '';
+    if (oauthRow) oauthRow.style.display = '';
+    if (instructions) instructions.style.display = 'none';
+    if (tokenRow) tokenRow.style.display = 'none';
+  }
 }
 
 async function logout() {
@@ -2003,6 +2064,13 @@ async function deploy() {
   const statusEl = document.getElementById('deploy-status');
 
   const gpu = isGpuSelected();
+  // Sync quick-start fields into customize fields if they have values
+  const qsTf = document.getElementById('qs-tf-api-key');
+  const tfField = document.getElementById('tf-api-key');
+  if (qsTf?.value && tfField && !tfField.value) tfField.value = qsTf.value;
+  const qsTavily = document.getElementById('qs-tavily-api-key');
+  const tavilyField = document.getElementById('tavily-api-key');
+  if (qsTavily?.value && tavilyField && !tavilyField.value) tavilyField.value = qsTavily.value;
   const apiKey = getActiveApiKey();
 
   btn.disabled = true;
