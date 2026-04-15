@@ -947,13 +947,29 @@ async function loadImages() {
 }
 
 // NemoClaw minimum requirements (from docs.nvidia.com/nemoclaw)
-const NEMOCLAW_REQUIREMENTS = {
-  minVcpu: 4,
-  minRamGb: 8,
-  minDiskGb: 20,
-  recommendedRamGb: 16,
-  recommendedDiskGb: 40
+const AGENT_REQUIREMENTS = {
+  openclaw: {
+    label: 'OpenClaw Minimum Requirements',
+    minVcpu: 2,
+    minRamGb: 4,
+    minDiskGb: 10,
+    recommendedRamGb: 8,
+    recommendedDiskGb: 20,
+    note: 'Image is ~400 MB compressed.'
+  },
+  nemoclaw: {
+    label: 'NemoClaw Minimum Requirements',
+    minVcpu: 4,
+    minRamGb: 8,
+    minDiskGb: 20,
+    recommendedRamGb: 16,
+    recommendedDiskGb: 40,
+    note: 'Image is ~2.4 GB compressed. Machines with <8 GB RAM may need swap configured.'
+  }
 };
+
+// Back-compat alias
+const NEMOCLAW_REQUIREMENTS = AGENT_REQUIREMENTS.nemoclaw;
 
 function selectImage(key) {
   state.selectedImage = key;
@@ -973,36 +989,33 @@ function selectImage(key) {
     customInput.classList.add('hidden');
   }
 
-  // Show/hide NemoClaw requirements notice
-  showNemoClawRequirements(key === 'nemoclaw');
-
+  updateAgentRequirements();
   updateDeployButton();
 }
 
-function showNemoClawRequirements(show) {
-  let notice = document.getElementById('nemoclaw-requirements');
-  if (show) {
-    if (!notice) {
-      notice = document.createElement('div');
-      notice.id = 'nemoclaw-requirements';
-      notice.className = 'nemoclaw-requirements';
-      notice.innerHTML = `
-        <div class="nemoclaw-req-header">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          <strong>NemoClaw Minimum Requirements</strong>
-        </div>
-        <div class="nemoclaw-req-grid">
-          <div class="nemoclaw-req-item"><span class="nemoclaw-req-label">CPU</span><span class="nemoclaw-req-value">${NEMOCLAW_REQUIREMENTS.minVcpu}+ vCPU</span></div>
-          <div class="nemoclaw-req-item"><span class="nemoclaw-req-label">RAM</span><span class="nemoclaw-req-value">${NEMOCLAW_REQUIREMENTS.minRamGb} GB min · ${NEMOCLAW_REQUIREMENTS.recommendedRamGb} GB recommended</span></div>
-          <div class="nemoclaw-req-item"><span class="nemoclaw-req-label">Disk</span><span class="nemoclaw-req-value">${NEMOCLAW_REQUIREMENTS.minDiskGb} GB min · ${NEMOCLAW_REQUIREMENTS.recommendedDiskGb} GB recommended</span></div>
-        </div>
-        <p class="nemoclaw-req-note">Image is ~2.4 GB compressed. Machines with &lt;8 GB RAM may need swap configured.</p>
-      `;
-      const imageCards = document.getElementById('image-cards');
-      imageCards.parentElement.insertBefore(notice, imageCards.nextSibling);
-    }
+function updateAgentRequirements() {
+  const notice = document.getElementById('agent-requirements');
+  if (!notice) return;
+
+  const agent = state.selectedImage; // 'openclaw' | 'nemoclaw' | 'custom' | ...
+  const isCustomCompute = state.selectedPlatform === 'custom';
+  const reqs = AGENT_REQUIREMENTS[agent];
+
+  if (reqs && isCustomCompute) {
+    notice.innerHTML = `
+      <div class="nemoclaw-req-header">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <strong>${esc(reqs.label)}</strong>
+      </div>
+      <div class="nemoclaw-req-grid">
+        <div class="nemoclaw-req-item"><span class="nemoclaw-req-label">CPU</span><span class="nemoclaw-req-value">${reqs.minVcpu}+ vCPU</span></div>
+        <div class="nemoclaw-req-item"><span class="nemoclaw-req-label">RAM</span><span class="nemoclaw-req-value">${reqs.minRamGb} GB min · ${reqs.recommendedRamGb} GB recommended</span></div>
+        <div class="nemoclaw-req-item"><span class="nemoclaw-req-label">Disk</span><span class="nemoclaw-req-value">${reqs.minDiskGb} GB min · ${reqs.recommendedDiskGb} GB recommended</span></div>
+      </div>
+      <p class="nemoclaw-req-note">${esc(reqs.note)}</p>
+    `;
     notice.classList.remove('hidden');
-  } else if (notice) {
+  } else {
     notice.classList.add('hidden');
   }
 }
@@ -1465,6 +1478,7 @@ async function selectPlatform(key) {
 
   updateProviderStepVisibility();
   updateApiKeyOptionalHint();
+  updateAgentRequirements();
   updateDeployButton();
 }
 
