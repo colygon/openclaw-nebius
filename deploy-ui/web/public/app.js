@@ -1000,10 +1000,9 @@ function updateAgentRequirements() {
   if (!notice) return;
 
   const agent = state.selectedImage; // 'openclaw' | 'nemoclaw' | 'custom' | ...
-  const isCustomCompute = state.selectedPlatform === 'custom';
   const reqs = AGENT_REQUIREMENTS[agent];
 
-  if (reqs && isCustomCompute) {
+  if (reqs) {
     notice.innerHTML = `
       <div class="nemoclaw-req-header">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
@@ -1409,11 +1408,6 @@ const PLATFORMS = {
     icon: '🚀',
     name: 'GPU',
     desc: 'from $1.55/hr (L40S) · H100 · H200'
-  },
-  'custom': {
-    icon: '⚙️',
-    name: 'Custom',
-    desc: 'Choose vCPUs, RAM, GPU model'
   }
 };
 
@@ -1446,9 +1440,7 @@ function loadPlatformCards() {
 
 function isGpuSelected() {
   if (state.selectedPlatform === 'gpu') return true;
-  if (state.selectedPlatform === 'custom' && state.customPlatformValue) {
-    return state.customPlatformValue.startsWith('gpu-');
-  }
+  if (state.customPlatformValue) return state.customPlatformValue.startsWith('gpu-');
   return false;
 }
 
@@ -1466,13 +1458,10 @@ async function selectPlatform(key) {
     c.classList.toggle('selected', c.dataset.key === key);
   });
 
+  // Always show the preset picker filtered to the selected type
   const picker = document.getElementById('custom-platform-picker');
-  if (key === 'custom') {
-    picker.classList.remove('hidden');
-    await loadCustomPlatformOptions();
-  } else {
-    picker.classList.add('hidden');
-  }
+  picker.classList.remove('hidden');
+  await loadPlatformPresets(key);
 
   updateProviderStepVisibility();
   updateApiKeyOptionalHint();
@@ -1488,7 +1477,7 @@ function updateApiKeyOptionalHint() {
   });
 }
 
-async function loadCustomPlatformOptions() {
+async function loadPlatformPresets(filter) {
   const select = document.getElementById('custom-platform-select');
   select.innerHTML = '<option value="">Loading...</option>';
   select.disabled = true;
@@ -1498,11 +1487,14 @@ async function loadCustomPlatformOptions() {
     const res = await authFetch(`/api/platforms?region=${encodeURIComponent(region)}`);
     const platforms = await res.json();
 
-    const cpuOpts = [];
-    const gpuOpts = [];
+    const opts = [];
 
     for (const p of platforms) {
       const isGpu = p.id.startsWith('gpu-');
+      // Filter: 'cpu' shows only CPU, 'gpu' shows only GPU
+      if (filter === 'cpu' && isGpu) continue;
+      if (filter === 'gpu' && !isGpu) continue;
+
       const gpuModel = p.id.replace('gpu-', '').replace(/-[a-z]$/, '').toUpperCase();
       for (const pr of p.presets) {
         const vcpu = pr.vcpu;
@@ -1520,15 +1512,11 @@ async function loadCustomPlatformOptions() {
           if (pricing) label += ` — ~$${(pricing.perVcpu * vcpu).toFixed(2)}/hr`;
         }
         const value = `${p.id}:${pr.name}`;
-        const opt = `<option value="${esc(value)}">${esc(label)}</option>`;
-        (isGpu ? gpuOpts : cpuOpts).push(opt);
+        opts.push(`<option value="${esc(value)}">${esc(label)}</option>`);
       }
     }
 
-    let html = '';
-    if (gpuOpts.length) html += `<optgroup label="GPU Platforms">${gpuOpts.join('')}</optgroup>`;
-    if (cpuOpts.length) html += `<optgroup label="CPU Platforms">${cpuOpts.join('')}</optgroup>`;
-    select.innerHTML = html || '<option value="">No platforms available</option>';
+    select.innerHTML = opts.length ? opts.join('') : '<option value="">No platforms available</option>';
     select.disabled = false;
 
     // Auto-select first option
@@ -1541,6 +1529,9 @@ async function loadCustomPlatformOptions() {
     select.disabled = false;
   }
 }
+
+// Legacy alias
+async function loadCustomPlatformOptions() { return loadPlatformPresets(state.selectedPlatform); }
 
 function selectCustomPlatformPreset(value) {
   state.customPlatformValue = value || null;
@@ -2027,7 +2018,7 @@ async function deploy() {
       region: state.selectedRegion,
       projectId: state.selectedProject,
       platform: state.selectedPlatform,
-      platformPreset: state.selectedPlatform === 'custom' ? state.customPlatformValue : null,
+      platformPreset: state.customPlatformValue || null,
       provider: state.selectedProvider,
       customImage: document.getElementById('custom-image-url')?.value || '',
       endpointName: document.getElementById('endpoint-name').value || '',
